@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantizationfail-challenge"
+version = "0.1.0"
+description = "Benchmark arena for memory-bandwidth-optimal LLM inference"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "quantizationfail" },
+]
+# The CLI and harness are installed as the `quantizationfail` command.
+# The modifiable surface (mlx_models/gemma4/*.py) is NOT installed —
+# it lives in the participant's working directory and is loaded by path
+# at runtime via the shadow package.
+dependencies = [
+  "mlx==0.31.1",
+  "mlx-lm>=0.31.2,<0.32",
+  "safetensors>=0.4",
+  "numpy>=1.24",
+  "typer>=0.12",
+  "rich>=13.0",
+  "tomli>=2.0; python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "black>=23.0",
+  "ruff>=0.1",
+]
+
+[project.scripts]
+quantizationfail = "quantizationfail.cli:app"
+qfail = "quantizationfail.cli:app"
+
+[tool.setuptools]
+include-package-data = true
+
+# Only install the frozen CLI + harness. The modifiable surface
+# (mlx_models/) is shipped as a template in the package data
+# but is NOT imported from site-packages — the harness loads it
+# from the participant's working directory.
+[tool.setuptools.packages.find]
+include = ["quantizationfail*"]
+exclude = ["mlx_models*", "weights*", "tests*"]
+
+[tool.setuptools.package-data]
+quantizationfail = ["harness/*.py", "_templates/*.py"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
