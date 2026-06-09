@@ -4,18 +4,30 @@ The harness re-runs the participant's `transform.py` in a clean
 sandbox to verify that the `weights/` directory is a deterministic
 function of `reference_weights/`. The sandbox:
 
-  - Forbids network access
-  - Forbids clock reads (time, datetime.now)
-  - Forbids environment variable reads
-  - Forbids reads from anything outside `reference_weights/`
+  - Forbids network access (socket.connect / socket.bind)
+  - Forbids clock reads (time.*, datetime.datetime.now/utcnow)
+  - Forbids environment variable reads (env is cleared before the script)
+  - Forbids reads from anything outside `reference_weights/` OR the
+    Python installation (stdlib + site-packages). Import reads are
+    permitted so that `transform.py` can use numpy, mlx, etc. — these
+    libraries must already be installed and are not under participant
+    control, so allowing their reads does not compromise provenance.
   - Forbids writes to anything outside `weights/`
+  - Forbids subprocess spawning (subprocess.Popen, os.system)
+  - Forbids process forking (os.fork)
+  - Forbids loading new native extensions (ctypes.dlopen) — ctypes can
+    bypass open() audit events entirely, so we block it at the dlopen
+    level. Extensions already loaded at hook-install time are unaffected
+    because dlopen is not called again for cached modules.
   - Captures the byte-hash of everything written to `weights/`
 
 If the re-run produces a different `weights/` than the participant
 submitted, the submission fails the provenance check.
 
 This is implemented via Python's `audit` events (PEP 578), which
-work on CPython 3.8+ and are not bypassable from user code.
+work on CPython 3.8+ and are not bypassable from pure-Python user
+code. ctypes/cffi can bypass open() events; they are blocked
+separately via their own audit events.
 """
 from __future__ import annotations
 
@@ -24,7 +36,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable
 
 
 def content_hash(path: Path) -> str:
@@ -46,54 +57,139 @@ from pathlib import Path
 REFERENCE = Path("{reference}").resolve()
 OUTPUT = Path("{output}").resolve()
 
-# Map of blocked APIs. The audit hook fires before the call returns
-# to user code; raising SystemExit aborts the process.
-BLOCKED = True
+# Collect allowed read roots BEFORE installing the hook, so that
+# sys.path is fully populated (by the interpreter startup) and we
+# can enumerate stdlib + site-packages directories.
+#
+# Empty-string entries mean "cwd" — that is the participant's working
+# directory, which must NOT be an allowed read source.
+_ALLOWED_READ_ROOTS = set()
+for _sp in sys.path:
+    if _sp and _sp != ".":
+        _candidate = Path(_sp).resolve()
+        if _candidate.is_dir():
+            _ALLOWED_READ_ROOTS.add(_candidate)
 
 def _is_within(path, parent):
     try:
-        path = Path(path).resolve()
+        resolved = Path(path).resolve()
     except (OSError, RuntimeError):
         return False
-    return parent in path.parents
+    return parent in resolved.parents
 
-def hook(event, args):
+def _is_allowed_read(path):
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, RuntimeError):
+        return False
+    # Always allow reads from the reference weights.
+    if _is_within(path, REFERENCE):
+        return True
+    # Allow reads from stdlib / site-packages so that `import numpy`,
+    # `import mlx`, etc. work inside transform.py.
+    for root in _ALLOWED_READ_ROOTS:
+        if root in resolved.parents or resolved == root:
+            return True
+    return False
+
+def _is_write(mode, flags):
+    """Return True if the open call is for writing.
+
+    `mode` may be a string (builtins.open) or an integer (os.open flags).
+    """
+    if isinstance(mode, str):
+        return any(c in mode for c in ("w", "a", "x"))
+    # os.open passes integer flags: O_RDONLY=0, O_WRONLY=1, O_RDWR=2.
+    O_WRONLY = 1
+    O_RDWR = 2
+    try:
+        return bool(int(mode) & (O_WRONLY | O_RDWR))
+    except (TypeError, ValueError):
+        return True  # Unknown mode — treat conservatively as write.
+
+def _audit_hook(event, args):
     if event == "open":
         # args: (path, mode, flags)
-        path, mode, flags = args[:3]
-        if "w" in mode or "a" in mode or "x" in mode:
-            # Writes must be within OUTPUT
+        path = args[0] if args else ""
+        mode = args[1] if len(args) > 1 else "r"
+        flags = args[2] if len(args) > 2 else 0
+        if _is_write(mode, flags):
             if not _is_within(path, OUTPUT):
                 sys.stderr.write(f"BLOCKED: write to {{path}} outside OUTPUT\\n")
                 sys.exit(3)
         else:
-            # Reads must be within REFERENCE
-            if not _is_within(path, REFERENCE):
-                sys.stderr.write(f"BLOCKED: read from {{path}} outside REFERENCE\\n")
+            if not _is_allowed_read(path):
+                sys.stderr.write(f"BLOCKED: read from {{path}} outside allowed paths\\n")
                 sys.exit(3)
-    elif event == "socket.connect" or event == "socket.bind":
+    elif event in ("socket.connect", "socket.bind"):
         sys.stderr.write("BLOCKED: network access\\n")
         sys.exit(3)
-    elif event == "os.system" or event == "subprocess.Popen":
+    elif event in ("os.system", "subprocess.Popen"):
         sys.stderr.write("BLOCKED: subprocess\\n")
         sys.exit(3)
-    elif event == "os.putenv" or event == "os.unsetenv":
+    elif event == "os.fork":
+        sys.stderr.write("BLOCKED: fork\\n")
+        sys.exit(3)
+    elif event in ("os.putenv", "os.unsetenv"):
         sys.stderr.write("BLOCKED: env mutation\\n")
         sys.exit(3)
-
-sys.addaudithook(hook)
-
-# Unset the env so the participant cannot read it.
-os.environ.clear()
-# Patch time sources.
-import time as _time
-class _FrozenTime:
-    def __getattr__(self, name):
-        sys.stderr.write(f"BLOCKED: time access ({{name}})\\n")
+    elif event == "ctypes.dlopen":
+        # ctypes can call arbitrary C code without going through open().
+        # Block loading new native libraries. Extensions already loaded
+        # before the hook was installed are in ctypes' internal cache and
+        # will not trigger dlopen again.
+        sys.stderr.write(
+            f"BLOCKED: ctypes.dlopen({{args[0] if args else '?'}})\\n"
+        )
         sys.exit(3)
-_time.time = _FrozenTime()
-_time.monotonic = _FrozenTime()
-_time.perf_counter = _FrozenTime()
+    elif event == "ctypes.call_function":
+        sys.stderr.write("BLOCKED: ctypes.call_function\\n")
+        sys.exit(3)
+
+sys.addaudithook(_audit_hook)
+
+# Clear the environment so the participant cannot read secrets or
+# host-specific paths from it.
+os.environ.clear()
+
+# Freeze every attribute on the time module — this blocks time.time(),
+# time.monotonic(), time.time_ns(), time.gmtime(), time.sleep(), etc.
+import time as _time
+class _FrozenAttr:
+    def __getattr__(self, name):
+        sys.stderr.write(f"BLOCKED: time.{{name}} access\\n")
+        sys.exit(3)
+    def __call__(self, *a, **kw):
+        sys.stderr.write("BLOCKED: time() call\\n")
+        sys.exit(3)
+_frozen = _FrozenAttr()
+for _name in (
+    "time", "monotonic", "perf_counter", "process_time",
+    "time_ns", "monotonic_ns", "perf_counter_ns",
+    "gmtime", "localtime", "mktime", "sleep",
+):
+    try:
+        setattr(_time, _name, _frozen)
+    except (AttributeError, TypeError):
+        pass
+
+# Freeze datetime.datetime so now() / utcnow() / today() are blocked.
+import datetime as _datetime
+_orig_datetime_cls = _datetime.datetime
+class _FrozenDatetime(_orig_datetime_cls):
+    @classmethod
+    def now(cls, *a, **kw):
+        sys.stderr.write("BLOCKED: datetime.datetime.now()\\n")
+        sys.exit(3)
+    @classmethod
+    def utcnow(cls, *a, **kw):
+        sys.stderr.write("BLOCKED: datetime.datetime.utcnow()\\n")
+        sys.exit(3)
+    @classmethod
+    def today(cls, *a, **kw):
+        sys.stderr.write("BLOCKED: datetime.datetime.today()\\n")
+        sys.exit(3)
+_datetime.datetime = _FrozenDatetime
 
 import runpy
 sys.argv = ["transform.py"]
