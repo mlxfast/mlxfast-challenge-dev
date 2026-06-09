@@ -142,6 +142,39 @@ def _peak_gpu_memory_gb() -> float:
     return mx.get_peak_memory() / (1024**3)
 
 
+def _install_participant_layer_patches() -> None:
+    """Install the participant's nn.Linear and expert layer patches.
+
+    Loads linear.py and experts.py directly (bypassing
+    mlx_models/gemma4/__init__.py) so that only the layer-level
+    primitives are patched — nn.Linear and switch_layers classes —
+    without replacing mlx_lm.models.gemma4_text.Model.
+
+    Why bypass __init__.py:
+      __init__.py also does `gemma4_text.Model = participant_Model`,
+      where participant_Model inherits from the OUTER gemma4.Model.
+      When the outer model's __init__ later calls
+      `gemma4_text.Model(inner_args)`, it would call the participant's
+      outer model with inner ModelArgs (no text_config field) and
+      raise AttributeError. Loading linear.py and experts.py directly
+      avoids this, while still ensuring every nn.Linear and expert
+      layer constructed during model building uses the participant's
+      classes.
+    """
+    import importlib.util as _ilu
+    from pathlib import Path as _Path
+
+    _moddir = _Path("mlx_models/gemma4")
+    for _name, _fname in [
+        ("_qf_linear", "linear.py"),
+        ("_qf_experts", "experts.py"),
+    ]:
+        _spec = _ilu.spec_from_file_location(_name, _moddir / _fname)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.install()
+
+
 def _load_models(weights_path: Path):
     """Load the reference and submission models.
 
@@ -152,19 +185,21 @@ def _load_models(weights_path: Path):
          nn.Linear class at construction time; patching nn.Linear
          afterwards does not affect already-constructed instances.
 
-      2. Import the shadow package (mlx_models.gemma4) to install the
-         participant's patches: nn.Linear → their Linear, SwitchGLU /
-         QuantizedSwitchLinear → their overrides, etc.
+      2. Install the participant's layer-level patches (nn.Linear,
+         QuantizedSwitchLinear, SwitchGLU). These are process-global
+         patches that affect all subsequently constructed layers.
 
       3. Load the submission model. All newly constructed nn.Linear
-         instances will use the participant's class.
+         and expert instances will use the participant's classes.
+         The participant's Model class is loaded via the weights/
+         config.json `model_file` pointer by mlx_lm.load — no separate
+         Model class patching is needed.
 
-    This ensures the reference model always uses the upstream implementation
-    and the submission model always uses the participant's modifiable surface,
-    even when both are loaded in the same process.
+    This ensures the reference model always uses the upstream
+    implementation and the submission model always uses the
+    participant's modifiable surface, even when both are loaded in
+    the same process.
     """
-    import importlib
-
     import mlx_lm
 
     # Step 1 — reference model (upstream, no patches).
@@ -174,13 +209,15 @@ def _load_models(weights_path: Path):
     ref_model.eval()
     mx.eval(ref_model.parameters())
 
-    # Step 2 — install participant patches.
-    # mlx_models.gemma4.__init__ patches nn.Linear and switch_layers
-    # globally. Existing reference-model instances are unaffected because
-    # Python class-instance dispatch is per-instance-type, not per-name.
-    importlib.import_module("mlx_models.gemma4")
+    # Step 2 — install participant's layer-level patches.
+    # Patching is done before the submission model is constructed so
+    # every new nn.Linear / expert layer uses the participant's class.
+    _install_participant_layer_patches()
 
-    # Step 3 — submission model (uses participant patches).
+    # Step 3 — submission model.
+    # mlx_lm.load reads weights/config.json; the `model_file` key
+    # there points mlx_lm at the participant's model.py for the Model
+    # and ModelArgs classes.
     sub_model, sub_tokenizer = mlx_lm.load(str(weights_path))
     sub_model.eval()
     mx.eval(sub_model.parameters())
