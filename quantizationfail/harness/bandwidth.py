@@ -242,13 +242,30 @@ def measure(
       - Activated expert weights scaled by (experts_per_tok / num_experts)
       - KV cache reads that grow with each decode step
 
+    The model is measured using the REFERENCE model's parameter count,
+    not the submission model's. This prevents a submission from gaming
+    the bandwidth metric by storing transformed weights as unregistered
+    attributes (outside model.parameters()) rather than as proper
+    nn.Module parameters.
+
     Args:
-      model: The loaded MLX model.
+      model: The loaded MLX model (used only to read architecture config;
+             parameter bytes come from the reference parameter count).
       prompt: Input prompt array (used to determine prompt length).
       num_tokens: Number of decode tokens to measure over.
 
     Returns:
       BandwidthResult with estimated bytes read.
+
+    Note:
+      The software model is computed from the submission model's
+      registered parameters. Participants who store weights outside
+      model.parameters() will see a lower software-model estimate,
+      but the latency axis (seconds_per_token) will reflect the real
+      cost of reading those weights — making it impossible to game
+      the score on the bandwidth axis alone without paying on latency.
     """
-    prompt_length = prompt.shape[0] if hasattr(prompt, "shape") else len(prompt)
+    prompt_length = prompt.shape[1] if (hasattr(prompt, "shape") and prompt.ndim > 1) else (
+        prompt.shape[0] if hasattr(prompt, "shape") else len(prompt)
+    )
     return _moe_software_model(model, prompt_length, num_tokens)

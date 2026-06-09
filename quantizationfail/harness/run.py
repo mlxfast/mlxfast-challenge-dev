@@ -145,32 +145,45 @@ def _peak_gpu_memory_gb() -> float:
 def _load_models(weights_path: Path):
     """Load the reference and submission models.
 
-    The reference model is loaded with mlx_lm's standard flow (no
-    modifiable surface). The submission model is loaded by manually
-    constructing the Model class from the modifiable surface and
-    calling the participant's load_weights function.
-    """
-    import mlx_lm
-    from mlx_lm.models import gemma4 as _upstream_gemma4
+    Load order matters for the global nn.Linear / switch_layers patches:
 
-    # Reference: standard mlx_lm.load with no model_file override.
-    # We force the upstream module's Model to be the pristine one
-    # (in case the modifiable surface patched it before the harness
-    # imported it; we re-bind here for safety).
+      1. Load the reference model FIRST, before any patches are applied.
+         The reference model's layer instances capture the upstream
+         nn.Linear class at construction time; patching nn.Linear
+         afterwards does not affect already-constructed instances.
+
+      2. Import the shadow package (mlx_models.gemma4) to install the
+         participant's patches: nn.Linear → their Linear, SwitchGLU /
+         QuantizedSwitchLinear → their overrides, etc.
+
+      3. Load the submission model. All newly constructed nn.Linear
+         instances will use the participant's class.
+
+    This ensures the reference model always uses the upstream implementation
+    and the submission model always uses the participant's modifiable surface,
+    even when both are loaded in the same process.
+    """
+    import importlib
+
+    import mlx_lm
+
+    # Step 1 — reference model (upstream, no patches).
     ref_model, ref_tokenizer = mlx_lm.load(
         str(constants.REFERENCE_WEIGHTS_DIR / constants.REFERENCE_MODEL_DIRNAME)
     )
-
-    # Submission: use mlx_lm.load, which honors config.json's
-    # `model_file` pointer to import the participant's modifiable
-    # model class. This is the canonical load path and handles all
-    # the sanitize / quantize edge cases.
-    sub_model, sub_tokenizer = mlx_lm.load(str(weights_path))
-
-    sub_model.eval()
-    mx.eval(sub_model.parameters())
     ref_model.eval()
     mx.eval(ref_model.parameters())
+
+    # Step 2 — install participant patches.
+    # mlx_models.gemma4.__init__ patches nn.Linear and switch_layers
+    # globally. Existing reference-model instances are unaffected because
+    # Python class-instance dispatch is per-instance-type, not per-name.
+    importlib.import_module("mlx_models.gemma4")
+
+    # Step 3 — submission model (uses participant patches).
+    sub_model, sub_tokenizer = mlx_lm.load(str(weights_path))
+    sub_model.eval()
+    mx.eval(sub_model.parameters())
 
     return ref_model, ref_tokenizer, sub_model
 
@@ -343,7 +356,7 @@ def main():
     report = run(args.weights, args.note, args.secret)
 
     # Append to results.tsv.
-    args.output_tsva.parent.mkdir(parents=True, exist_ok=True)
+    args.output_tsv.parent.mkdir(parents=True, exist_ok=True)
     if not args.output_tsv.exists():
         args.output_tsv.write_text(RunReport.tsv_header() + "\n")
     with open(args.output_tsv, "a") as f:
