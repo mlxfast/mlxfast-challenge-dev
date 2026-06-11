@@ -1,15 +1,11 @@
 name: benchmark
 
-# Runs for: same-repo PRs (maintainers), pushes to main (post-promotion
-# re-validation), and workflow_dispatch (Yukon dispatches on yukon/baseline/*
-# and yukon/submissions/* branches it constructs, then reads the score from
-# the uploaded artifact). Fork PRs never run: macOS runner minutes are
-# expensive and a fork could drain them by spamming PRs; participants submit
-# through Yukon instead.
+# Dispatch-only: Yukon dispatches on yukon/baseline/* and yukon/submissions/*
+# branches it constructs, then reads the score from the uploaded artifact.
+# Maintainers can dispatch manually on any branch (e.g. on main to warm the
+# weights cache). No PR or push triggers: macOS runner minutes are expensive,
+# and nothing should be able to burn them without an explicit dispatch.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -21,15 +17,12 @@ permissions:
 
 jobs:
   benchmark:
-    # No fork PRs — see the note on the triggers above.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # MLX requires Apple Silicon; the baseline peaks at ~27 GB RAM, so the
     # 48 GB tier is the smallest Blacksmith Mac that fits.
     runs-on: blacksmith-12vcpu-macos-latest
     timeout-minutes: 120
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -39,7 +32,7 @@ jobs:
       # Yukon already enforces editablePaths server-side when it builds candidate
       # branches; re-checking here is defense in depth against orchestrator bugs.
       - name: Enforce modifiable surface (yukon candidate branches)
-        if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'yukon/submissions/')
+        if: startsWith(github.ref_name, 'yukon/submissions/')
         env:
           HEAD_SHA: ${{ github.sha }}
         run: |
@@ -87,12 +80,3 @@ jobs:
             score.json
             results.tsv
           if-no-files-found: ignore
-
-      # Best-effort: the artifact is the durable copy of the score.
-      - name: Comment score on PR
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: .github/scripts/comment-score.sh
