@@ -1,6 +1,6 @@
 name: benchmark
 
-# Dispatch-only: Yukon dispatches on yukon/baseline/* and yukon/submissions/*
+# Dispatch-only: Yukon dispatches on yukon/baseline/* and submissions/*
 # branches it constructs, then reads the score from the uploaded artifact.
 # Maintainers can dispatch manually on any branch (e.g. on main to warm the
 # weights cache). No PR or push triggers: macOS runner minutes are expensive,
@@ -32,7 +32,7 @@ jobs:
       # Yukon already enforces editablePaths server-side when it builds candidate
       # branches; re-checking here is defense in depth against orchestrator bugs.
       - name: Enforce modifiable surface (yukon candidate branches)
-        if: startsWith(github.ref_name, 'yukon/submissions/')
+        if: startsWith(github.ref_name, 'submissions/')
         env:
           HEAD_SHA: ${{ github.sha }}
         run: |
