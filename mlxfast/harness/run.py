@@ -100,7 +100,7 @@ def _get_git_commit() -> str:
         import subprocess
 
         return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "rev-parse", "HEAD"],
             cwd=Path.cwd(),
             stderr=subprocess.DEVNULL,
         ).decode().strip()
@@ -304,7 +304,11 @@ def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tup
 
     # Start mactop hardware bandwidth measurement.
     mactop = bandwidth.MactopSession()
-    mactop.start()
+    if not mactop.start():
+        raise RuntimeError(
+            "mactop is required for bandwidth measurement but was not found; "
+            "run ./setup.sh or install it with Homebrew"
+        )
 
     # Decode loop
     cache = model.make_cache() if hasattr(model, "make_cache") else None
@@ -428,8 +432,8 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
         )
         peak_bytes = int(peak_gb * (1024**3))
         bw = bandwidth.measure(
-            sub_model, prompt, constants.DECODE_LENGTH,
-            mactop_session=mactop_session,
+            mactop_session,
+            constants.DECODE_LENGTH,
             decode_duration=decode_spt * constants.DECODE_LENGTH,
         )
 

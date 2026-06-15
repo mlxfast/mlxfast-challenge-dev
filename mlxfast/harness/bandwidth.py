@@ -13,22 +13,23 @@ concurrently, and computes:
 
   gb_per_token = (mean_non_zero_gbps × decode_duration_s) / num_tokens
 
-If mactop is not installed or fails, the harness falls back to an
-MoE-aware software model with DeepSeek V4 Flash defaults.
+If mactop is not installed or fails to produce samples, bandwidth
+measurement fails closed.
 """
 from __future__ import annotations
 
 import json
 import os
 import signal
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .constants import DECODE_LENGTH, N_ROUTED_EXPERTS, NUM_EXPERTS_PER_TOK, NUM_HIDDEN_LAYERS
+from .constants import DECODE_LENGTH
 
-MACTOP_BINARY = "/opt/homebrew/bin/mactop"
+MACTOP_BINARY = os.environ.get("MACTOP_BINARY", "")
 MACTOP_INTERVAL_MS = 100          # sample every 100 ms
 MACTOP_MAX_SAMPLES = 600          # 60 s — enough to outlast any decode run
 
@@ -38,7 +39,7 @@ class BandwidthResult:
     bytes_read: int
     tokens_decoded: int
     gb_per_token: float
-    source: str   # "mactop_hardware" | "moe_software_model" | "unavailable"
+    source: str   # "mactop_hardware"
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +52,19 @@ class BandwidthResult:
 
 # ── mactop hardware measurement ───────────────────────────────────────────────
 
+def _find_mactop_binary() -> Optional[str]:
+    candidates = [
+        MACTOP_BINARY,
+        shutil.which("mactop"),
+        "/opt/homebrew/bin/mactop",
+        "/usr/local/bin/mactop",
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
 class MactopSession:
     """Context manager that runs mactop in the background and collects samples."""
 
@@ -61,12 +75,13 @@ class MactopSession:
 
     def start(self) -> bool:
         """Start mactop. Returns False if binary not found."""
-        if not os.path.exists(MACTOP_BINARY):
+        binary = _find_mactop_binary()
+        if binary is None:
             return False
         try:
             self._proc = subprocess.Popen(
                 [
-                    MACTOP_BINARY,
+                    binary,
                     "--headless",
                     "--count", str(MACTOP_MAX_SAMPLES),
                     "--interval", str(MACTOP_INTERVAL_MS),
@@ -133,78 +148,25 @@ def _mactop_result(session: MactopSession, num_tokens: int, decode_duration: flo
     )
 
 
-# ── software model fallback ───────────────────────────────────────────────────
-
-def _software_model(model, num_tokens: int, prompt_length: int) -> BandwidthResult:
-    """MoE-aware software bandwidth estimate with DS4 defaults."""
-    from mlx.utils import tree_flatten
-
-    leaves = tree_flatten(model.parameters())
-    shared_bytes = 0
-    expert_bytes = 0
-
-    for name, arr in leaves:
-        path = "/".join(str(p) for p in name) if isinstance(name, tuple) else str(name)
-        path_lower = path.lower()
-        is_expert = (
-            "switch_mlp" in path_lower
-            and any(x in path_lower for x in ("gate_proj", "up_proj", "down_proj"))
-        )
-        if is_expert:
-            expert_bytes += arr.nbytes
-        else:
-            shared_bytes += arr.nbytes
-
-    # DS4 Flash defaults
-    n_experts = N_ROUTED_EXPERTS
-    experts_per_tok = NUM_EXPERTS_PER_TOK
-    n_layers = NUM_HIDDEN_LAYERS
-
-    try:
-        cfg = getattr(model, "config", None) or getattr(model, "args", None)
-        if cfg is not None:
-            n_experts = getattr(cfg, "n_routed_experts", n_experts)
-            experts_per_tok = getattr(cfg, "num_experts_per_tok", experts_per_tok)
-            n_layers = getattr(cfg, "num_hidden_layers", n_layers)
-    except Exception:
-        pass
-
-    expert_frac = experts_per_tok / n_experts if n_experts > 0 else 1.0
-    param_bytes_per_token = shared_bytes + expert_bytes * expert_frac
-    total_bytes = int(param_bytes_per_token * num_tokens)
-    gb_per_token = (total_bytes / num_tokens) / (1024 ** 3) if num_tokens > 0 else 0.0
-
-    return BandwidthResult(
-        bytes_read=total_bytes,
-        tokens_decoded=num_tokens,
-        gb_per_token=gb_per_token,
-        source="moe_software_model",
-    )
-
-
 # ── public API ────────────────────────────────────────────────────────────────
 
 def measure(
-    model,
-    prompt: "mx.array",
+    mactop_session: MactopSession,
     num_tokens: int = DECODE_LENGTH,
-    mactop_session: Optional[MactopSession] = None,
     decode_duration: float = 0.0,
 ) -> BandwidthResult:
-    """Return bandwidth estimate for `num_tokens` decode steps.
+    """Return mactop-measured bandwidth for `num_tokens` decode steps.
 
-    If a MactopSession is provided (started before the decode loop and
-    stopped after), use hardware DRAM counters.  Otherwise fall back to
-    the MoE software model.
+    The session must be started before the decode loop and stopped after.
+    Missing or empty mactop samples are a hard failure.
     """
-    if mactop_session is not None and mactop_session._samples:
-        result = _mactop_result(mactop_session, num_tokens, decode_duration)
-        if result is not None:
-            return result
+    if mactop_session is None:
+        raise TypeError("mactop_session is required")
 
-    # Software model fallback.
-    prompt_length = (
-        prompt.shape[1] if (hasattr(prompt, "shape") and prompt.ndim > 1)
-        else (prompt.shape[0] if hasattr(prompt, "shape") else len(prompt))
-    )
-    return _software_model(model, num_tokens, prompt_length)
+    result = _mactop_result(mactop_session, num_tokens, decode_duration)
+    if result is None:
+        raise RuntimeError(
+            "mactop produced no non-zero DRAM bandwidth samples; "
+            "install mactop and ensure hardware counters are available"
+        )
+    return result

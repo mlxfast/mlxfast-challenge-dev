@@ -8,11 +8,8 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 ## Quickstart
 
 ```bash
-# Install
-pip install mlx-vlm==0.6.3 mlx>=0.31.2 safetensors mactop
-
-# Download reference weights (~30 GB, one-time)
-mlxfast weights
+# Install Homebrew/mactop if needed, then Python deps and weights
+./setup.sh
 
 # Split expert weights onto SSD (baseline transform, runs once)
 python transform.py
@@ -106,4 +103,4 @@ score.json                   written after each finite passing run
 - macOS Sequoia or later
 - Python 3.11+
 - `mlx>=0.31.2`, `mlx-vlm==0.6.3`, `mlx-lm>=0.31.3`
-- [mactop](https://github.com/metaspartan/mactop) (`brew install mactop`) — required for bandwidth measurement
+- [mactop](https://github.com/metaspartan/mactop) — installed by `./setup.sh` via Homebrew when missing

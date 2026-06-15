@@ -236,18 +236,12 @@ Some directions worth exploring:
 - macOS Sequoia or later
 - Python 3.11+
 - `mlx>=0.31.2`, `mlx-vlm==0.6.3`, `mlx-lm>=0.31.3`
-- [mactop](https://github.com/metaspartan/mactop) — `brew install mactop`
+- [mactop](https://github.com/metaspartan/mactop) — installed by `./setup.sh` via Homebrew when missing
 
 ### Install
 
 ```bash
-pip install mlx-vlm==0.6.3 "mlx>=0.31.2" safetensors mactop
-```
-
-### Get the weights
-
-```bash
-mlxfast weights
+./setup.sh
 ```
 
 Downloads `mlx-community/DeepSeek-V4-Flash-4bit` (~30 GB) to `reference_weights/`. Do not substitute a different checkpoint — it will fail the correctness gate.
