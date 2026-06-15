@@ -33,7 +33,7 @@ fi
 VENV_DIR="${VENV_DIR:-.venv}"
 PYTHON="${PYTHON:-${VENV_DIR}/bin/python}"
 SCORE_PATH="${MLXFAST_SCORE_PATH:-score.json}"
-REFERENCE_DIR="mlxfast/reference_weights/gemma-4-26B-A4B-it-qat-4bit"
+REFERENCE_DIR="mlxfast/reference_weights/DeepSeek-V4-Flash-4bit"
 SOURCE_HASH_PATH="weights/.benchmark-source.sha256"
 BENCHMARK_HELPER="tools/benchmark_contract.py"
 

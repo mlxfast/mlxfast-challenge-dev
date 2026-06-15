@@ -17,10 +17,14 @@ permissions:
 
 jobs:
   benchmark:
-    # MLX requires Apple Silicon; the baseline peaks at ~27 GB RAM, so the
-    # 48 GB tier is the smallest Blacksmith Mac that fits.
-    runs-on: blacksmith-12vcpu-macos-latest
-    timeout-minutes: 15
+    # MLX requires Apple Silicon. DS4-Flash peaks at ~8 GB GPU RAM during
+    # inference, but transform.py reads/writes ~141 GB of weights so the
+    # runner needs ample disk (≥300 GB) and RAM (≥32 GB).
+    runs-on: blacksmith-16vcpu-macos-15
+    # Decode: 512 tokens × ~0.5 s/tok = ~4 min. Prefill + correctness + setup
+    # + possible transform (~10 min on NVMe) + cache restore bring total to
+    # ~45 min on a warm cache, ~60 min when transform must re-run.
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -43,14 +47,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Blacksmith transparently serves actions/cache from colocated storage.
-      # The reference checkpoint never changes, so the key is static.
-      - name: Cache reference weights (~18 GB)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: mlxfast/reference_weights
-          key: reference-weights-gemma-4-26B-A4B-it-qat-4bit-v1
-
       - name: Cache pip downloads
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -58,14 +54,46 @@ jobs:
           key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-${{ runner.os }}-
 
-      # Online phase: installs the venv and, only on a weights cache miss,
-      # downloads the reference checkpoint (`mlxfast weights` is idempotent).
-      - name: Setup
-        run: ./setup.sh
+      # Install venv and tooling; skip the HF weight download — we handle
+      # caching below so we know whether to download at all.
+      - name: Install dependencies
+        run: MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1 ./setup.sh
+
+      # Primary cache: the fully-transformed weights/ directory (~141 GB).
+      # Key covers transform.py + all mlx_models sources so any participant
+      # change invalidates it and triggers a fresh transform on the next step.
+      # Blacksmith serves this from colocated NVMe storage (~5–10 min restore).
+      - name: Cache transformed weights (~141 GB)
+        id: weights-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: weights
+          key: ds4-weights-${{ hashFiles('transform.py', 'mlx_models/**') }}-v1
+
+      # Secondary cache: the raw DS4-Flash HF checkpoint (~141 GB).
+      # Only restored on a transformed-weights cache miss, since transform.py
+      # needs the reference checkpoint. Static key — the checkpoint never changes.
+      - name: Cache reference weights (~141 GB)
+        if: steps.weights-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: mlxfast/reference_weights/DeepSeek-V4-Flash-4bit
+          key: ds4-reference-weights-v1
+
+      # Download reference weights only when both caches miss (first ever run
+      # or reference cache evicted). benchmark.sh will then run transform.py.
+      - name: Download reference weights (on cache miss)
+        if: steps.weights-cache.outputs.cache-hit != 'true'
+        run: |
+          if [[ ! -f mlxfast/reference_weights/DeepSeek-V4-Flash-4bit/config.json ]]; then
+            .venv/bin/python -m mlxfast.cli weights
+          fi
 
       # Offline phase: benchmark.sh self-sandboxes — it proves the Seatbelt
       # profile (tools/deny-network.sb) blocks egress, then re-execs itself
       # under sandbox-exec with no network and no sudo.
+      # benchmark.sh skips transform when weights/ exists with the correct
+      # source hash; otherwise it runs transform.py first.
       - name: Benchmark (offline)
         env:
           MLXFAST_NOTE: "ci ${{ github.event_name }} ${{ github.sha }}"
