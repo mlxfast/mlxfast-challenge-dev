@@ -17,7 +17,7 @@ Issues are grouped by category. New findings are appended as they are discovered
 
 ### A-001 [CRITICAL] Reference and Submission Model Are the Same Object
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: BY DESIGN | **Files**: `mlxfast/harness/run.py`
 
 ```python
 def _load_models(weights_path: Path):
@@ -138,7 +138,7 @@ hidden state is checked locally.
 
 ### A-006 [HIGH] Harness Hash Not Pinned — Tamper Detection Disabled
 
-**Status**: OPEN | **Files**: `mlxfast/harness/constants.py`, `mlxfast/_self_hash.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlxfast/harness/constants.py`, `mlxfast/_self_hash.py`
 
 ```python
 EXPECTED_HARNESS_HASH = os.environ.get("MLXFAST_EXPECTED_HARNESS_HASH", "")
@@ -248,7 +248,7 @@ transform execution.
 
 ### A-011 [MEDIUM] Slot Bank Reads Are Synchronous — No I/O Overlap
 
-**Status**: OPEN | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
 
 ```python
 records = [bank.get(self._layer_idx, e) for e in unique]
@@ -284,7 +284,7 @@ wired but has no consumer. Dead code that could confuse participants.
 
 ### A-013 [MEDIUM] Global `mx.clear_cache()` in Prefill Causes Fragile Behavior
 
-**Status**: OPEN | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
 
 ```python
 if N > 1:
@@ -307,7 +307,7 @@ could silently corrupt results or crash with obscure Metal errors.
 
 ### A-014 [MEDIUM] `sorted(set(tolist()))` Creates CPU-GPU Sync Point Per Layer
 
-**Status**: OPEN | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
+**Status**: BY DESIGN | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
 
 ```python
 unique: list[int] = sorted(set(sorted_idx.tolist()))
@@ -326,7 +326,7 @@ CPU-indexing for the slot bank lookup.
 
 ### A-015 [LOW] Shared Expert Quantization Config Written But Not Applied
 
-**Status**: OPEN | **Files**: `mlx_models/deepseek_v4/language.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/deepseek_v4/language.py`
 
 ```python
 def make_quantization_config(model):
@@ -376,7 +376,7 @@ and subtract it from decode samples.
 
 ### A-017 [MEDIUM] Software Bandwidth Model (Fallback) Is Inaccurate
 
-**Status**: OPEN | **Files**: `mlxfast/harness/bandwidth.py`
+**Status**: FIXED (4e4063b) | **Files**: `mlxfast/harness/bandwidth.py`
 
 ```python
 def _moe_software_estimate(model, experts_manifest_path, num_tokens):
@@ -401,7 +401,7 @@ in the leaderboard are meaningless for comparisons.
 
 ### A-018 [LOW] Mactop Zero-Filtering Can Mask Real Low-Bandwidth Windows
 
-**Status**: OPEN | **Files**: `mlxfast/harness/bandwidth.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlxfast/harness/bandwidth.py`
 
 ```python
 if bw > 0.0:
@@ -423,7 +423,7 @@ instead of mean.
 
 ### A-019 [MEDIUM] Speculative Decoding Not Normalized in Scoring
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlxfast/harness/run.py`
 
 SPEC §6.7 specifies that speculative decoding submissions must normalize:
 - `draft_tokens_per_step` (measured average)
@@ -485,7 +485,7 @@ in certain pip resolution order, the wrong version could be installed.
 
 ### A-022 [MEDIUM] No Baseline Published — No Calibration Point
 
-**Status**: OPEN | **Files**: `CHALLENGE.md`, `README.md`
+**Status**: ACKNOWLEDGED | **Files**: `CHALLENGE.md`, `README.md`
 
 All baseline metrics show "TBD" — no actual baseline has been measured.
 Without a published baseline:
@@ -500,7 +500,7 @@ publish the metrics before launch.
 
 ### A-023 [LOW] Submission Infrastructure Is a Stub
 
-**Status**: OPEN | **Files**: `mlxfast/cli.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlxfast/cli.py`
 
 `mlxfast submit` only prints JSON to stdout when `MLXFAST_API_URL` is unset.
 The server endpoint is not built. `mlxfast login` stores credentials to disk
@@ -593,6 +593,8 @@ layers × 256 experts.
 **Fix required**: Open/close shards on demand rather than holding all 33
 simultaneously. The bottleneck is disk I/O, not file handle overhead.
 
+**Status**: ACKNOWLEDGED | **Files**: `transform.py`
+
 #### A-027 [LOW] Fallback Stacked Format Handles Only Weight, Not Scales/Biases
 
 ```python
@@ -605,6 +607,8 @@ But in the stacked format, scales and biases may have different key patterns
 (e.g., `.switch_mlp.gate_proj.scales` vs `.switch_mlp.gate_proj.weight`).
 If the scales tensor is per-expert (not stacked) while the weight is stacked,
 the code may miss the scales entry and fail to find it later.
+
+**Status**: ACKNOWLEDGED | **Files**: `transform.py`
 
 ---
 
@@ -628,6 +632,8 @@ too tight for layers with small activation norms and too loose for large ones.
 
 **Fix required**: Compare pre-norm hidden states, or use a relative error
 metric (`|a-b| / max(|a|, |b|, 1e-8)`) instead of absolute.
+
+**Status**: ACKNOWLEDGED | **Files**: `mlxfast/harness/correctness.py`
 
 #### A-029 [LOW] Top-K Logit Set Uses argpartition — May Not Be Deterministic
 
@@ -680,6 +686,13 @@ this writes to the first 2 positions. But it should write to the **last**
 creates a slice `3:2` which is **empty**. The tail tokens are silently
 discarded.
 
+**Status**: RESOLVED — NOT A BUG | **Files**: `mlx_models/cache.py`
+
+Analysis: `new_remainder < self.remainder` requires a modular wrap, which
+implies `usable > 0`. When `usable > 0`, `self.remainder` is reset to `0`
+(line 431) BEFORE the new_remainder slice assignment. So the slice is always
+`0 : new_remainder`, which is valid.
+
 #### A-031 [LOW] RotatingKVCache Offset Type Confusion
 
 ```python
@@ -695,6 +708,8 @@ But `RotatingKVCache.update_and_fetch` increments `self.offset` which starts
 as `0` (Python int). After adding an `mx.array`, it becomes an `mx.array`.
 This causes subsequent comparisons like `if cache.offset > max_size:` to
 return an mx.array instead of bool, which can fail in conditional contexts.
+
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/cache.py`
 
 ---
 
@@ -718,6 +733,8 @@ prevents subsequent `load_weights` from assigning new values if the module's
 
 **Fix required**: Initialize with empty/none weights and only allocate during
 `load_weights`.
+
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/mlx_lm_shims/mla.py`
 
 ---
 
@@ -750,6 +767,8 @@ cache entry. For non-pipeline usage (the challenge), `pipeline_size = 1` and
 `start_idx = 0`, so this code path is never exercised. But it's dead code
 that could confuse participants maintaining the model.
 
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/deepseek_v4/language.py`
+
 ---
 
 ### Cycle 7: Integrity of Score Computation
@@ -770,6 +789,8 @@ of ~0.00003, which is below the reported precision (6 decimal places).
 decode_latency (typically ∼5-10) while peak_ram × prefill contributes ∼0.3-0.5.
 Optimizing only peak RAM has diminishing returns on the score.
 
+**Status**: NOT A BUG | **Files**: `mlxfast/harness/run.py`
+
 ---
 
 ### Cycle 8: Deep-Dive Into hyper_connection.py Metal Kernel
@@ -787,6 +808,8 @@ size. The kernel assigns lane 0-31 for sinkhorn (simd group 0) and all 256
 threads for the collapse phase. On future GPUs with different threadgroup
 limitations, this could be suboptimal or fail to compile.
 
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/deepseek_v4/hyper_connection.py`
+
 #### A-036 [LOW] bfloat4 Loading Assumes 4-Byte Alignment
 
 ```python
@@ -798,6 +821,8 @@ The `float4` load from `mix` assumes 16-byte alignment. If `mix` is not
 in Metal. In practice, Metal's device memory allocation is 16-byte aligned,
 and `BASE_OFF = 2 * HC` with HC=4 gives 8 floats = 32 bytes, so it's aligned.
 But this is fragile — changing HC breaks it silently.
+
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/deepseek_v4/hyper_connection.py`
 
 ---
 
@@ -820,6 +845,8 @@ report smaller shapes (to reduce recorded bandwidth), the slot bank would
 read truncated data and pass it to gather_qmm. The correctness gate might
 still catch this (wrong hidden states), but it's a potential attack vector
 for the software bandwidth model (which reads `record_size` from the manifest).
+
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/mlx_lm_shims/switch_layers.py`
 
 ---
 
@@ -1066,7 +1093,7 @@ in the harness hash, not just `harness/`.
 
 #### A-047 [LOW] CI Modifiable Surface Check Only Covers Directory Level
 
-**Status**: OPEN | **Files**: `.github/scripts/enforce-modifiable-surface.sh`
+**Status**: ACKNOWLEDGED | **Files**: `.github/scripts/enforce-modifiable-surface.sh`
 
 ```bash
 alowed="$(git show "${BASE_SHA}:benchmark.json" \
@@ -1183,7 +1210,7 @@ obvious cause.
 
 #### A-052 [MEDIUM] Attention Mask Created From Single hc_mult Slice May Be Wrong for Layers
 
-**Status**: OPEN | **Files**: `mlx_models/deepseek_v4/language.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/deepseek_v4/language.py`
 
 ```python
 mask = create_attention_mask(
@@ -1225,7 +1252,7 @@ when cache states diverge.
 
 #### A-053 [LOW] Decode Timing Includes MX Argmax Operation
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: NOT A BUG | **Files**: `mlxfast/harness/run.py`
 
 ```python
 t0 = time.perf_counter()
@@ -1346,7 +1373,7 @@ tensors may exceed Metal capacity.
 
 #### A-058 [LOW] PoolingCache.make_mask Returns None During Decode Creating No Mask
 
-**Status**: OPEN | **Files**: `mlx_models/cache.py`
+**Status**: ACKNOWLEDGED | **Files**: `mlx_models/cache.py`
 
 ```python
 def make_mask(self, L: int = 1, offset: int = 0):
@@ -1582,7 +1609,7 @@ RAM available on the CI runner and local machines.
 
 ### A-101 [MEDIUM] Pass 2 Manifest Computation Opens/Closes 6 Separate safetensor Handles
 
-**Status**: OPEN (low priority) | **Files**: `transform.py`
+**Status**: ACKNOWLEDGED | **Files**: `transform.py`
 
 Pass 2 reads layer-0 expert-0 shapes to build the manifest. It opens and closes
 a new `safe_open` handle for each of the 6 stacked tensors:
@@ -1612,7 +1639,7 @@ and use it in Pass 2 instead of re-reading tensors from disk.
 
 ### A-102 [INFO] Pass 4 Dense-Only Shard Writing Loads from All 33 Shards
 
-**Status**: OPEN (low priority) | **Files**: `transform.py`
+**Status**: ACKNOWLEDGED | **Files**: `transform.py`
 
 Pass 4 uses `mx.load(str(src))` for each of the 33 source shard files to
 load only dense (non-expert) tensors. `mx.load` is lazy — it reads the
@@ -1630,7 +1657,7 @@ only 26 keys total.
 
 ### A-103 [INFO] Transform Output Size: ~280 GB Written to Weights Disk
 
-**Status**: OPEN (note only) | **Files**: `transform.py`
+**Status**: OBSERVATION | **Files**: `transform.py`
 
 The baseline transform writes:
 - **43 × layer_NN.bin**: ~284 MB each = **~12.2 GB** total (expert weight records)
