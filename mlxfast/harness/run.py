@@ -191,7 +191,7 @@ def _force_sanitize_load(load_fn):
             return self
 
         def __exit__(self, *args):
-            self._f.__exit__(None, None, None)
+            self._f.__exit__(*args)
             return False  # never suppress exceptions from the outer with-block
 
     def _patched_load_config(model_path, **kwargs):
@@ -474,8 +474,6 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
             mactop_session,
             constants.DECODE_LENGTH,
             decode_duration=getattr(mactop_session, "_elapsed", decode_spt * constants.DECODE_LENGTH),
-            model=sub_model,
-            experts_manifest_path=str(weights_path / "experts" / "manifest.json"),
             idle_gbps=idle_gbps,
         )
 
