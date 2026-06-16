@@ -385,10 +385,10 @@ def _build_submission_payload(weights: Path, note: str) -> dict:
 
     modifiable_hashes = {}
     for f in [
-        constants.MODIFIABLE_DIR / "model.py",
-        constants.MODIFIABLE_DIR / "linear.py",
-        constants.MODIFIABLE_DIR / "weights.py",
-        constants.MODIFIABLE_DIR / "experts.py",
+        constants.MODIFIABLE_DIR / "deepseek_v4.py",
+        constants.MODIFIABLE_DIR / "language.py",
+        constants.MODIFIABLE_DIR / "config.py",
+        constants.MODIFIABLE_DIR / "hyper_connection.py",
     ]:
         if f.exists():
             modifiable_hashes[str(f)] = _hash_file(f)
