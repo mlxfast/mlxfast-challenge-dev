@@ -152,8 +152,10 @@ sys.addaudithook(_audit_hook)
 # host-specific paths from it.
 os.environ.clear()
 
-# Freeze every attribute on the time module — this blocks time.time(),
-# time.monotonic(), time.time_ns(), time.gmtime(), time.sleep(), etc.
+# Block only clock functions that return wall-clock time and could be used
+# to seed an RNG or introduce non-determinism.  Performance counters and
+# sleep() are harmless: they don't affect output, and some internal numpy/
+# mlx routines call perf_counter() for logging.
 import time as _time
 class _FrozenAttr:
     def __getattr__(self, name):
@@ -164,9 +166,8 @@ class _FrozenAttr:
         sys.exit(3)
 _frozen = _FrozenAttr()
 for _name in (
-    "time", "monotonic", "perf_counter", "process_time",
-    "time_ns", "monotonic_ns", "perf_counter_ns",
-    "gmtime", "localtime", "mktime", "sleep",
+    "time", "time_ns",
+    "gmtime", "localtime", "mktime",
 ):
     try:
         setattr(_time, _name, _frozen)
