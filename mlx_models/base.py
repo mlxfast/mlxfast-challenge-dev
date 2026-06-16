@@ -236,6 +236,7 @@ def scaled_dot_product_attention(
             dequantized_values.astype(queries.dtype),
             scale=scale,
             mask=mask,
+            sinks=sinks,
         )
 
     return mlx_scaled_dot_product_attention(
