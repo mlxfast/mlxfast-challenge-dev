@@ -61,14 +61,20 @@ OUTPUT = Path("{output}").resolve()
 # sys.path is fully populated (by the interpreter startup) and we
 # can enumerate stdlib + site-packages directories.
 #
-# Empty-string entries mean "cwd" — that is the participant's working
-# directory, which must NOT be an allowed read source.
+# Empty-string entries and "." mean cwd — the participant's working
+# directory, which must NOT be an allowed read source.  We also
+# explicitly exclude the resolved cwd itself so that absolute-path
+# entries that happen to equal cwd are rejected too.
+_CWD = Path(".").resolve()
 _ALLOWED_READ_ROOTS = set()
 for _sp in sys.path:
-    if _sp and _sp != ".":
-        _candidate = Path(_sp).resolve()
-        if _candidate.is_dir():
-            _ALLOWED_READ_ROOTS.add(_candidate)
+    if not _sp or _sp == ".":
+        continue
+    _candidate = Path(_sp).resolve()
+    if _candidate == _CWD or _CWD in _candidate.parents:
+        continue
+    if _candidate.is_dir():
+        _ALLOWED_READ_ROOTS.add(_candidate)
 
 def _is_within(path, parent):
     try:
