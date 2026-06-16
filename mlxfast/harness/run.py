@@ -439,6 +439,11 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
             seed ^ 0xDEADBEEF,  # distinct seed from the decode prompt
         )
 
+        # Measure prefill latency first (cold slot-bank) so that prefill
+        # pays its true disk-read cost rather than benefiting from experts
+        # already cached by the decode phase.
+        prefill_spt = _measure_prefill_latency(sub_model, prefill_prompt)
+
         # Measure decode latency, peak RAM, and bandwidth together.
         decode_spt, peak_gb, mactop_session = _measure_latency_and_memory(
             sub_model, prompt, constants.DECODE_LENGTH
@@ -452,9 +457,6 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
             experts_manifest_path=str(weights_path / "experts" / "manifest.json"),
             idle_gbps=idle_gbps,
         )
-
-        # Measure prefill latency.
-        prefill_spt = _measure_prefill_latency(sub_model, prefill_prompt)
 
         sr = score.compute(
             peak_ram_bytes=peak_bytes,
