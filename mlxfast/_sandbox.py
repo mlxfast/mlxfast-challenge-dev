@@ -151,6 +151,9 @@ def _audit_hook(event, args):
     elif event == "ctypes.call_function":
         sys.stderr.write("BLOCKED: ctypes.call_function\\n")
         sys.exit(3)
+    elif event == "os.sendfile":
+        sys.stderr.write("BLOCKED: os.sendfile\\n")
+        sys.exit(3)
 
 sys.addaudithook(_audit_hook)
 
