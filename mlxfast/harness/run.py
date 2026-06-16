@@ -274,17 +274,18 @@ def _load_config_dict(weights_path: Path) -> dict:
 def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tuple[float, float, "bandwidth.MactopSession"]:
     """Decode `num_tokens` tokens, return (seconds_per_token, peak_ram_gb).
 
-    Resets the MLX peak memory counter before the decode loop, then
-    reads peak memory after eval. This ensures peak RAM captures only
-    the decode phase, not prefill or warmup.
+    Resets the MLX peak memory counter before any forward pass so that
+    warmup allocations (KV cache, slot bank, expert stacks) are included
+    in the peak. Decode reuses these buffers without re-allocating them,
+    so resetting after warmup would report near-zero peak.
     """
-    # Warmup
+    # Reset before any forward pass — captures the true allocation peak.
+    mx.reset_peak_memory()
+
+    # Warmup — allocates KV cache, slot bank, expert stacks.
     cache = model.make_cache() if hasattr(model, "make_cache") else None
     _ = model(prompt, cache=cache)
     mx.eval(model.parameters())
-
-    # Reset peak memory counter before measuring decode.
-    mx.reset_peak_memory()
 
     # Start mactop hardware bandwidth measurement.
     mactop = bandwidth.MactopSession()
