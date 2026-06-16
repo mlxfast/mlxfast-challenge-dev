@@ -419,6 +419,18 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
         # participants from changing num_experts, num_layers, etc.
         _check_architecture_invariants(weights_path)
 
+        # When no transform.py exists the server must verify weight provenance
+        # via a pinned reference hash.  Locally we can only warn; the server
+        # will reject any submission whose weights hash doesn't match.
+        if not constants.TRANSFORM_SCRIPT.exists():
+            import warnings
+            warnings.warn(
+                "No transform.py found. Weight provenance cannot be verified "
+                "locally. The server will compare weights/ against the pinned "
+                "reference hash and reject mismatches.",
+                stacklevel=2,
+            )
+
         # Measure idle DRAM baseline before model loads so background
         # system traffic (display, kernel tasks) can be subtracted.
         idle_gbps = bandwidth.measure_idle_bandwidth(duration_s=3.0)
