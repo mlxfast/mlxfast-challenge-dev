@@ -311,6 +311,10 @@ def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tup
     seconds_per_token = elapsed / num_tokens
     peak_ram_gb = _peak_gpu_memory_gb()
 
+    # Attach actual elapsed so bandwidth.measure() uses the real mactop
+    # sample window rather than a value derived from mean decode_spt.
+    mactop._elapsed = elapsed
+
     return seconds_per_token, peak_ram_gb, mactop
 
 
@@ -404,7 +408,7 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
         bw = bandwidth.measure(
             mactop_session,
             constants.DECODE_LENGTH,
-            decode_duration=decode_spt * constants.DECODE_LENGTH,
+            decode_duration=getattr(mactop_session, "_elapsed", decode_spt * constants.DECODE_LENGTH),
             model=sub_model,
             experts_manifest_path=str(weights_path / "experts" / "manifest.json"),
         )
