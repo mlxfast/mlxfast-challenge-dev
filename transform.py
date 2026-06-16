@@ -59,7 +59,6 @@ from typing import Optional
 
 import numpy as np
 from safetensors import safe_open
-from safetensors.numpy import save_file
 
 # ─── paths ────────────────────────────────────────────────────────────────────
 
@@ -318,15 +317,57 @@ def main() -> None:
             except Exception:
                 pass
 
-    # ── pass 4: write dense-only shard files ──────────────────────────────
-    # Extract only non-expert keys from each source shard and save to new
-    # (much smaller) safetensors files.  We use mlx to handle bfloat16
-    # (numpy doesn't support it).  mx.load returns lazy arrays so only the
-    # keys we actually access are read from disk — stacked expert tensors
-    # in the same shard file are never loaded.
-    import mlx.core as mx
+    # ── pass 4: write dense-only shard files (raw safetensors copy) ───────
+    # Extract only non-expert keys from each source shard into new (much
+    # smaller) safetensors files.  We copy each tensor's raw bytes verbatim
+    # rather than materialising it, which preserves any dtype exactly —
+    # including bf16, which numpy can't represent — using nothing but the
+    # stdlib.  This keeps transform.py free of MLX so it runs on Linux as
+    # well as macOS, and is byte-reproducible for the provenance check.
+    #
+    # safetensors layout: [8-byte u64 LE header length][JSON header][data].
+    # The header maps name -> {dtype, shape, data_offsets:[begin,end]} where
+    # offsets are relative to the start of the data section.
+    import struct
 
-    print("Writing dense-only shard files...")
+    def _st_header(path: Path) -> tuple[dict, int]:
+        with open(path, "rb") as f:
+            (hlen,) = struct.unpack("<Q", f.read(8))
+            return json.loads(f.read(hlen)), 8 + hlen
+
+    def _write_dense_shard(src: Path, dst: Path, keys: list[str]) -> int:
+        header, data_start = _st_header(src)
+        keys = sorted(k for k in keys if k in header and k != "__metadata__")
+        # First pass: assign contiguous output offsets.
+        new_header: dict = {}
+        cursor = 0
+        for k in keys:
+            begin, end = header[k]["data_offsets"]
+            nbytes = end - begin
+            new_header[k] = {
+                "dtype": header[k]["dtype"],
+                "shape": header[k]["shape"],
+                "data_offsets": [cursor, cursor + nbytes],
+            }
+            cursor += nbytes
+        head_bytes = json.dumps(new_header, separators=(",", ":")).encode("utf-8")
+        # Second pass: stream the raw bytes through in chunks (bounded memory).
+        with open(src, "rb") as fin, open(dst, "wb") as fout:
+            fout.write(struct.pack("<Q", len(head_bytes)))
+            fout.write(head_bytes)
+            for k in keys:
+                begin, end = header[k]["data_offsets"]
+                fin.seek(data_start + begin)
+                remaining = end - begin
+                while remaining:
+                    chunk = fin.read(min(remaining, 16 << 20))
+                    if not chunk:
+                        raise IOError(f"short read copying {k} from {src.name}")
+                    fout.write(chunk)
+                    remaining -= len(chunk)
+        return len(keys)
+
+    print("Writing dense-only shard files (raw byte copy, no MLX)...")
 
     # Group dense keys by source shard.
     shard_to_dense_keys: dict[str, list[str]] = {}
@@ -340,13 +381,9 @@ def main() -> None:
         if dst.exists():
             print(f"  {shard_name}  (exists, skip)")
             continue
-        # Lazy load — only keys we access are read from disk.
-        all_tensors = mx.load(str(src))
-        dense_tensors = {k: all_tensors[k] for k in keys if k in all_tensors}
-        mx.eval(dense_tensors)
-        mx.save_safetensors(str(dst), dense_tensors)
+        n = _write_dense_shard(src, dst, keys)
         size_mb = dst.stat().st_size / 1e6
-        print(f"  {shard_name}  {size_mb:.0f} MB  ({len(dense_tensors)} tensors)")
+        print(f"  {shard_name}  {size_mb:.0f} MB  ({n} tensors)")
 
     # ── pass 5: copy tokenizer + config files ─────────────────────────────
     skip_names = {"model.safetensors.index.json"}
