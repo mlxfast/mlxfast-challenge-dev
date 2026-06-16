@@ -191,7 +191,8 @@ def _force_sanitize_load(load_fn):
             return self
 
         def __exit__(self, *args):
-            return self._f.__exit__(*args)
+            self._f.__exit__(None, None, None)
+            return False  # never suppress exceptions from the outer with-block
 
     def _patched_load_config(model_path, **kwargs):
         config = _orig_load_config(model_path, **kwargs)
