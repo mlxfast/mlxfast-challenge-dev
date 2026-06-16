@@ -144,6 +144,11 @@ def _audit_hook(event, args):
         # Block loading new native libraries. Extensions already loaded
         # before the hook was installed are in ctypes' internal cache and
         # will not trigger dlopen again.
+        # Residual risk (A-043): libraries imported before this hook was
+        # installed (e.g. numpy, mlx) retain their function pointers and
+        # can still call C code.  This is accepted: those libraries are
+        # part of the approved Python environment and are not under
+        # participant control.
         sys.stderr.write(
             f"BLOCKED: ctypes.dlopen({{args[0] if args else '?'}})\\n"
         )
