@@ -71,7 +71,7 @@ decode peak.
 
 ### A-003 [HIGH] Correctness Steps Hardcoded to 64 (Spec Says 256)
 
-**Status**: OPEN | **Files**: `mlxfast/harness/correctness.py`
+**Status**: FIXED (765ba92) | **Files**: `mlxfast/harness/correctness.py`
 
 ```python
 CORRECTNESS_STEPS = 64
@@ -90,7 +90,7 @@ discrepancy and justify why 64 is sufficient.
 
 ### A-004 [MEDIUM] Prefill Latency Measured After Decode — Cache Contamination
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (635a191) | **Files**: `mlxfast/harness/run.py`
 
 ```python
 decode_spt, peak_gb, mactop_session = _measure_latency_and_memory(...)
@@ -162,7 +162,7 @@ time. The env var override should be for dev only.
 
 ### A-007 [HIGH] No Architecture Invariant Check
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (d1047f0) | **Files**: `mlxfast/harness/run.py`
 
 SPEC §6.3 specifies:
 ```python
@@ -198,7 +198,7 @@ or different checkpoint and the harness wouldn't detect it.
 
 ### A-009 [MEDIUM] Sandbox Read Whitelist Includes Participant's CWD
 
-**Status**: OPEN | **Files**: `mlxfast/_sandbox.py`
+**Status**: FIXED (c5104cd) | **Files**: `mlxfast/_sandbox.py`
 
 ```python
 for _sp in sys.path:
@@ -221,7 +221,7 @@ contain it from `_ALLOWED_READ_ROOTS`.
 
 ### A-010 [LOW] Sandbox Time Blocking Too Broad
 
-**Status**: OPEN | **Files**: `mlxfast/_sandbox.py`
+**Status**: FIXED (6e1e4f4) | **Files**: `mlxfast/_sandbox.py`
 
 ```python
 class _FrozenAttr:
@@ -269,7 +269,7 @@ any GPU changes.
 
 ### A-012 [MEDIUM] Cross-Layer Prefetch Metadata Wired But Dead
 
-**Status**: OPEN | **Files**: `mlx_models/deepseek_v4/deepseek_v4.py`
+**Status**: FIXED (43ab323) | **Files**: `mlx_models/deepseek_v4/deepseek_v4.py`
 
 ```python
 for i, (layer_idx, switch) in enumerate(moe_layers):
@@ -568,6 +568,8 @@ This is fine but confusing — three different code paths that converge on the
 same attribute. A simpler design would be to have `stop()` only return and
 let the caller assign.
 
+**Status**: FIXED (c4df16f) | **Files**: `mlxfast/harness/bandwidth.py`
+
 ---
 
 ### Cycle 2: Deep-Dive Into transform.py
@@ -642,6 +644,8 @@ to ordering within equal elements.
 
 **Fix required**: Use `mx.topk` which is documented as stable, or sort within
 the top-K set before comparing.
+
+**Status**: FIXED (e150e45) | **Files**: `mlxfast/harness/correctness.py`
 
 ---
 
@@ -892,7 +896,7 @@ the error is hard to debug.
 
 #### A-041 [LOW] Seed Generation Truncates to 32 Bits — Weak Entropy
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (e7fad1f) | **Files**: `mlxfast/harness/run.py`
 
 ```python
 def hashlib_sha256(s: str) -> int:
@@ -921,7 +925,7 @@ SHA-256 output to seed `numpy.random.SeedSequence`.
 
 #### A-042 [MEDIUM] Sandbox Audit Hook Does Not Block os.pread/os.pwrite
 
-**Status**: OPEN | **Files**: `mlxfast/_sandbox.py`
+**Status**: FIXED (d35e954) | **Files**: `mlxfast/_sandbox.py`
 
 The audit hook monitors `open`, `socket.connect`, `subprocess.Popen`,
 etc. But it does NOT monitor:
@@ -1003,7 +1007,7 @@ meta_path finder) instead of temporarily replacing sys.modules entries.
 
 #### A-045 [MEDIUM] _SafeOpenNoFormatMeta.__exit__ Passes Exceptions to Inner Context Manager
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (9404990) | **Files**: `mlxfast/harness/run.py`
 
 ```python
 def __exit__(self, *args):
@@ -1149,7 +1153,7 @@ to skip the sinks check when they are all-zero.
 
 #### A-051 [MEDIUM] BatchTurboQuantKVCache Path Silently Drops Attention Sinks
 
-**Status**: OPEN | **Files**: `mlx_models/base.py`
+**Status**: FIXED (68709ea) | **Files**: `mlx_models/base.py`
 
 ```python
 if isinstance(cache, BatchTurboQuantKVCache):
@@ -1273,7 +1277,7 @@ discarded) but doesn't affect correctness.
 
 #### A-056 [LOW] _hc_kernel With Unsupported Dtype Falls Back to _hc_ops But Fails Gracefully
 
-**Status**: OPEN | **Files**: `mlx_models/deepseek_v4/hyper_connection.py`
+**Status**: FIXED (0427ff1) | **Files**: `mlx_models/deepseek_v4/hyper_connection.py`
 
 ```python
 use_ops = (
