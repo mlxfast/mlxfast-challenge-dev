@@ -144,11 +144,50 @@ class MactopSession:
         self._samples = self.stop()
 
 
-def _mactop_result(session: MactopSession, num_tokens: int, decode_duration: float) -> Optional[BandwidthResult]:
+def measure_idle_bandwidth(duration_s: float = 3.0) -> float:
+    """Sample background DRAM bandwidth for `duration_s` seconds.
+
+    Returns the mean non-zero GB/s across samples, or 0.0 if mactop is
+    unavailable. Call this before model loading so the idle baseline
+    reflects system noise without inference activity.
+    """
+    binary = _find_mactop_binary()
+    if binary is None:
+        return 0.0
+    n_samples = max(1, int(duration_s * 1000 / MACTOP_INTERVAL_MS))
+    try:
+        result = subprocess.run(
+            [binary, "--headless", "--count", str(n_samples),
+             "--interval", str(MACTOP_INTERVAL_MS), "--format", "json"],
+            capture_output=True, text=True, timeout=duration_s + 5,
+        )
+        samples: List[float] = []
+        try:
+            items = json.loads(result.stdout)
+            if isinstance(items, list):
+                for obj in items:
+                    bw = obj.get("soc_metrics", {}).get("dram_bw_combined_gbs", 0.0)
+                    if bw > 0.0:
+                        samples.append(float(bw))
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return sum(samples) / len(samples) if samples else 0.0
+    except Exception:
+        return 0.0
+
+
+def _mactop_result(
+    session: MactopSession,
+    num_tokens: int,
+    decode_duration: float,
+    idle_gbps: float = 0.0,
+) -> Optional[BandwidthResult]:
     samples = session._samples
     if not samples:
         return None
-    mean_gbps = sum(samples) / len(samples)
+    # Subtract idle baseline from each sample (floor at 0) then average.
+    net_samples = [max(s - idle_gbps, 0.0) for s in samples]
+    mean_gbps = sum(net_samples) / len(net_samples)
     total_gb = mean_gbps * decode_duration
     gb_per_token = total_gb / num_tokens if num_tokens > 0 else 0.0
     total_bytes = int(total_gb * (1024 ** 3))
@@ -213,12 +252,14 @@ def measure(
     decode_duration: float = 0.0,
     model=None,
     experts_manifest_path: str = "",
+    idle_gbps: float = 0.0,
 ) -> BandwidthResult:
     """Return bandwidth for `num_tokens` decode steps.
 
     Primary: mactop hardware DRAM counters (captures all traffic including
     expert SSD reads via page cache — correct for MoE without any special
-    formula).
+    formula). idle_gbps is subtracted per-sample to remove background DRAM
+    traffic (display, kernel tasks) from the measurement.
 
     Fallback: MoE-aware software model using non-expert model.parameters()
     bytes plus activated-expert bytes from the expert manifest.  Used only
@@ -227,7 +268,7 @@ def measure(
     if mactop_session is None:
         raise TypeError("mactop_session is required")
 
-    result = _mactop_result(mactop_session, num_tokens, decode_duration)
+    result = _mactop_result(mactop_session, num_tokens, decode_duration, idle_gbps=idle_gbps)
     if result is not None:
         return result
 

@@ -375,7 +375,11 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
     seed = int(hashlib_sha256(f"{secret}|{commit}")) % (2**31)
 
     try:
-        sub_model, _, _ = _load_models(weights_path)
+        # Measure idle DRAM baseline before model loads so background
+        # system traffic (display, kernel tasks) can be subtracted.
+        idle_gbps = bandwidth.measure_idle_bandwidth(duration_s=3.0)
+
+        ref_model, ref_tokenizer, sub_model = _load_models(weights_path)
 
         # Correctness checking is disabled for now: this harness measures
         # performance only. num_layers is still reported as run metadata.
@@ -411,6 +415,7 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
             decode_duration=getattr(mactop_session, "_elapsed", decode_spt * constants.DECODE_LENGTH),
             model=sub_model,
             experts_manifest_path=str(weights_path / "experts" / "manifest.json"),
+            idle_gbps=idle_gbps,
         )
 
         # Measure prefill latency.
