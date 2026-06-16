@@ -311,8 +311,8 @@ def _check_architecture_invariants(weights_path: Path) -> None:
         )
 
 
-def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tuple[float, float, "bandwidth.MactopSession"]:
-    """Decode `num_tokens` tokens, return (seconds_per_token, peak_ram_gb).
+def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tuple[float, int, "bandwidth.MactopSession"]:
+    """Decode `num_tokens` tokens, return (seconds_per_token, peak_ram_bytes).
 
     Resets the MLX peak memory counter before any forward pass so that
     warmup allocations (KV cache, slot bank, expert stacks) are included
@@ -349,13 +349,13 @@ def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tup
     mactop._samples = mactop.stop()
 
     seconds_per_token = elapsed / num_tokens
-    peak_ram_gb = _peak_gpu_memory_gb()
+    peak_ram_bytes = mx.get_peak_memory()
 
     # Attach actual elapsed so bandwidth.measure() uses the real mactop
     # sample window rather than a value derived from mean decode_spt.
     mactop._elapsed = elapsed
 
-    return seconds_per_token, peak_ram_gb, mactop
+    return seconds_per_token, peak_ram_bytes, mactop
 
 
 def _measure_prefill_latency(model, prompt: mx.array) -> float:
@@ -466,10 +466,9 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
         prefill_spt = _measure_prefill_latency(sub_model, prefill_prompt)
 
         # Measure decode latency, peak RAM, and bandwidth together.
-        decode_spt, peak_gb, mactop_session = _measure_latency_and_memory(
+        decode_spt, peak_bytes, mactop_session = _measure_latency_and_memory(
             sub_model, prompt, constants.DECODE_LENGTH
         )
-        peak_bytes = int(peak_gb * (1024**3))
         bw = bandwidth.measure(
             mactop_session,
             constants.DECODE_LENGTH,
