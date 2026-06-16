@@ -373,7 +373,7 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
     harness_hash = constants.compute_harness_hash()
 
     # Seed the prompt.
-    seed = int(hashlib_sha256(f"{secret}|{commit}")) % (2**31)
+    seed = int(hashlib_sha256(f"{secret}|{commit}")) % (2**63)
 
     try:
         # Measure idle DRAM baseline before model loads so background
@@ -471,10 +471,10 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
 
 
 def hashlib_sha256(s: str) -> int:
-    """SHA-256 of a string, returned as an int (truncated to 31 bits)."""
+    """SHA-256 of a string, returned as an int (truncated to 63 bits)."""
     import hashlib
 
-    return int.from_bytes(hashlib.sha256(s.encode()).digest()[:4], "big")
+    return int.from_bytes(hashlib.sha256(s.encode()).digest()[:8], "big")
 
 
 def main():
