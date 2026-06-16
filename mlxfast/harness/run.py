@@ -272,6 +272,36 @@ def _load_config_dict(weights_path: Path) -> dict:
         return json.load(f)
 
 
+def _check_architecture_invariants(weights_path: Path) -> None:
+    """Verify frozen config fields match the reference DeepSeek V4 Flash values.
+
+    Raises RuntimeError if any field is missing or has a wrong value.
+    This prevents participants from changing model architecture (e.g. fewer
+    experts) to get an artificially better score.
+    """
+    cfg = _load_config_dict(weights_path)
+
+    # Fields whose values must exactly match the reference checkpoint.
+    required = {
+        "num_hidden_layers": constants.NUM_HIDDEN_LAYERS,
+        "n_routed_experts": constants.N_ROUTED_EXPERTS,
+        "num_experts_per_tok": constants.NUM_EXPERTS_PER_TOK,
+        "vocab_size": constants.VOCAB_SIZE,
+    }
+    errors = []
+    for field, expected in required.items():
+        actual = cfg.get(field)
+        if actual is None:
+            errors.append(f"  {field}: MISSING (expected {expected})")
+        elif int(actual) != expected:
+            errors.append(f"  {field}: {actual} (expected {expected})")
+    if errors:
+        raise RuntimeError(
+            "Architecture invariant check failed — config.json has wrong values:\n"
+            + "\n".join(errors)
+        )
+
+
 def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tuple[float, float, "bandwidth.MactopSession"]:
     """Decode `num_tokens` tokens, return (seconds_per_token, peak_ram_gb).
 
@@ -376,6 +406,10 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
     seed = int(hashlib_sha256(f"{secret}|{commit}")) % (2**63)
 
     try:
+        # Verify frozen architecture fields before loading to prevent
+        # participants from changing num_experts, num_layers, etc.
+        _check_architecture_invariants(weights_path)
+
         # Measure idle DRAM baseline before model loads so background
         # system traffic (display, kernel tasks) can be subtracted.
         idle_gbps = bandwidth.measure_idle_bandwidth(duration_s=3.0)
