@@ -113,7 +113,7 @@ phases.
 
 ### A-005 [MEDIUM] No Hidden State From All Three Correctness Layers
 
-**Status**: OPEN | **Files**: `mlxfast/harness/correctness.py`
+**Status**: FIXED (e1af7b0) | **Files**: `mlxfast/harness/correctness.py`
 
 The three correctness layers are:
 1. Greedy token sequence match (implemented)
@@ -182,7 +182,7 @@ match the reference exactly, called in `run()` before model loading.
 
 ### A-008 [MEDIUM] Weight Provenance Not Verified (No-Transform Path)
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (b0625bd) | **Files**: `mlxfast/harness/run.py`
 
 SPEC §6.1 specifies content-hash comparison between `weights/` and the
 expected hash from `transform.py`. When `transform.py` exists, the sandbox
@@ -843,7 +843,7 @@ but its contract is undocumented.
 
 #### A-039 [MEDIUM] Frozen Field `intermediate_size` Does Not Exist in Reference Config
 
-**Status**: OPEN | **Files**: `SPEC.md`, `mlxfast/harness/constants.py`
+**Status**: FIXED (ad96b26) | **Files**: `SPEC.md`, `mlxfast/harness/constants.py`
 
 SPEC §6.3 lists `intermediate_size` as a frozen config field. But the
 reference `config.json` for DeepSeek V4 Flash does NOT contain
@@ -867,7 +867,7 @@ is added later, it must handle missing fields with a default fallback.
 
 #### A-040 [MEDIUM] `_force_sanitize_load` Globally Patches safetensors.safe_open
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (b94db73) | **Files**: `mlxfast/harness/run.py`
 
 ```python
 _vu.safetensors.safe_open = _SafeOpenNoFormatMeta
@@ -943,7 +943,7 @@ and any other I/O-related events.
 
 #### A-043 [LOW] Ctypes Handles Loaded Before Hook Are Still Usable
 
-**Status**: OPEN | **Files**: `mlxfast/_sandbox.py`
+**Status**: FIXED (7d69a2d) | **Files**: `mlxfast/_sandbox.py`
 
 ```python
 elif event == "ctypes.dlopen":
@@ -973,7 +973,7 @@ parent process) are still possible.
 
 #### A-044 [MEDIUM] sys.modules Swap Is Not Thread-Safe or Re-entrant
 
-**Status**: OPEN | **Files**: `mlxfast/harness/run.py`
+**Status**: FIXED (b94db73) | **Files**: `mlxfast/harness/run.py`
 
 ```python
 _orig = sys.modules.get("mlx_vlm.models.deepseek_v4")
