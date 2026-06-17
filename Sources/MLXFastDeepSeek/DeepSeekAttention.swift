@@ -151,24 +151,24 @@ public struct DeepSeekIndexerSpec {
 }
 
 public struct DeepSeekLocalAttentionWeights {
-    public let wqA: MLXArray
+    public let wqA: DeepSeekLinearWeight
     public let qNorm: MLXArray
-    public let wqB: MLXArray
-    public let wkv: MLXArray
+    public let wqB: DeepSeekLinearWeight
+    public let wkv: DeepSeekLinearWeight
     public let kvNorm: MLXArray
-    public let woA: MLXArray
-    public let woB: MLXArray
+    public let woA: DeepSeekLinearWeight
+    public let woB: DeepSeekLinearWeight
     public let woBBias: MLXArray?
     public let attentionSink: MLXArray?
 
     public init(
-        wqA: MLXArray,
+        wqA: DeepSeekLinearWeight,
         qNorm: MLXArray,
-        wqB: MLXArray,
-        wkv: MLXArray,
+        wqB: DeepSeekLinearWeight,
+        wkv: DeepSeekLinearWeight,
         kvNorm: MLXArray,
-        woA: MLXArray,
-        woB: MLXArray,
+        woA: DeepSeekLinearWeight,
+        woB: DeepSeekLinearWeight,
         woBBias: MLXArray? = nil,
         attentionSink: MLXArray? = nil
     ) {
@@ -181,6 +181,30 @@ public struct DeepSeekLocalAttentionWeights {
         self.woB = woB
         self.woBBias = woBBias
         self.attentionSink = attentionSink
+    }
+
+    public init(
+        wqA: MLXArray,
+        qNorm: MLXArray,
+        wqB: MLXArray,
+        wkv: MLXArray,
+        kvNorm: MLXArray,
+        woA: MLXArray,
+        woB: MLXArray,
+        woBBias: MLXArray? = nil,
+        attentionSink: MLXArray? = nil
+    ) {
+        self.init(
+            wqA: DeepSeekLinearWeight(wqA),
+            qNorm: qNorm,
+            wqB: DeepSeekLinearWeight(wqB),
+            wkv: DeepSeekLinearWeight(wkv),
+            kvNorm: kvNorm,
+            woA: DeepSeekLinearWeight(woA),
+            woB: DeepSeekLinearWeight(woB),
+            woBBias: woBBias,
+            attentionSink: attentionSink
+        )
     }
 }
 
@@ -201,14 +225,26 @@ public struct DeepSeekCompressedAttentionWeights {
 }
 
 public struct DeepSeekIndexerWeights {
-    public let wqB: MLXArray
-    public let weightsProj: MLXArray
+    public let wqB: DeepSeekLinearWeight
+    public let weightsProj: DeepSeekLinearWeight
     public let compressor: DeepSeekCompressorWeights
 
-    public init(wqB: MLXArray, weightsProj: MLXArray, compressor: DeepSeekCompressorWeights) {
+    public init(
+        wqB: DeepSeekLinearWeight,
+        weightsProj: DeepSeekLinearWeight,
+        compressor: DeepSeekCompressorWeights
+    ) {
         self.wqB = wqB
         self.weightsProj = weightsProj
         self.compressor = compressor
+    }
+
+    public init(wqB: MLXArray, weightsProj: MLXArray, compressor: DeepSeekCompressorWeights) {
+        self.init(
+            wqB: DeepSeekLinearWeight(wqB),
+            weightsProj: DeepSeekLinearWeight(weightsProj),
+            compressor: compressor
+        )
     }
 }
 
@@ -281,16 +317,25 @@ public struct DeepSeekCompressorSpec {
 }
 
 public struct DeepSeekCompressorWeights {
-    public let wkv: MLXArray
-    public let wgate: MLXArray
+    public let wkv: DeepSeekLinearWeight
+    public let wgate: DeepSeekLinearWeight
     public let ape: MLXArray
     public let norm: MLXArray
 
-    public init(wkv: MLXArray, wgate: MLXArray, ape: MLXArray, norm: MLXArray) {
+    public init(wkv: DeepSeekLinearWeight, wgate: DeepSeekLinearWeight, ape: MLXArray, norm: MLXArray) {
         self.wkv = wkv
         self.wgate = wgate
         self.ape = ape
         self.norm = norm
+    }
+
+    public init(wkv: MLXArray, wgate: MLXArray, ape: MLXArray, norm: MLXArray) {
+        self.init(
+            wkv: DeepSeekLinearWeight(wkv),
+            wgate: DeepSeekLinearWeight(wgate),
+            ape: ape,
+            norm: norm
+        )
     }
 }
 
@@ -490,7 +535,7 @@ public enum DeepSeekLocalAttention {
 
         out = out.reshaped([batchSize, spec.outputGroups, -1, sequenceLength, spec.headDim])
         out = out.transposed(0, 1, 3, 2, 4).flattened(start: -2)
-        out = DeepSeekOps.multiLinear(input: out, weight: weights.woA)
+        out = try DeepSeekOps.multiLinear(input: out, weight: weights.woA)
         out = out.transposed(0, 2, 1, 3).flattened(start: -2)
         return DeepSeekOps.linear(input: out, weight: weights.woB, bias: weights.woBBias)
     }
@@ -633,7 +678,7 @@ public enum DeepSeekCompressedAttention {
 
         out = out.reshaped([batchSize, spec.outputGroups, -1, sequenceLength, spec.headDim])
         out = out.transposed(0, 1, 3, 2, 4).flattened(start: -2)
-        out = DeepSeekOps.multiLinear(input: out, weight: weights.attention.woA)
+        out = try DeepSeekOps.multiLinear(input: out, weight: weights.attention.woA)
         out = out.transposed(0, 2, 1, 3).flattened(start: -2)
         return DeepSeekOps.linear(
             input: out,

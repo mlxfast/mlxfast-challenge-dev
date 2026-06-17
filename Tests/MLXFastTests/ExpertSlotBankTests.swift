@@ -46,6 +46,39 @@ func expertSlotBankReadsExactByteRanges() throws {
 }
 
 @Test
+func expertSlotBankMaterializesFirstAxisSlice() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let experts = root.appendingPathComponent("weights/experts", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: experts, withIntermediateDirectories: true)
+
+    let shard = reference.appendingPathComponent("model-00001.safetensors")
+    try Data([0, 1, 2, 3, 4, 5]).write(to: shard)
+
+    let tensorName = "model.layers.0.ffn.switch_mlp.gate_proj.weight"
+    try manifestJSON(
+        referencePath: reference.path,
+        records: [
+            record(name: tensorName, shard: shard.lastPathComponent, offset: 0, length: 6, shape: [3, 2]),
+        ]
+    ).write(
+        to: experts.appendingPathComponent("manifest.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let bank = try ExpertSlotBank(
+        manifestPath: experts.appendingPathComponent("manifest.json").path,
+        capacity: 2
+    )
+    let slice = try bank.materializedTensor(named: tensorName, firstAxisIndex: 1)
+
+    #expect(slice.shape == [2])
+    #expect(try slice.uint8Values() == [2, 3])
+}
+
+@Test
 func expertSlotBankEvictsLeastRecentlyUsedTensor() throws {
     let root = try temporaryDirectory()
     let reference = root.appendingPathComponent("reference", isDirectory: true)
@@ -155,18 +188,29 @@ private func manifestJSON(referencePath: String, records: [String]) -> String {
     """
 }
 
-private func record(name: String, shard: String, offset: Int, length: Int) -> String {
-    """
+private func record(
+    name: String,
+    shard: String,
+    offset: Int,
+    length: Int,
+    shape: [Int]? = nil
+) -> String {
+    let shape = shape ?? [length]
+    return """
     {
       "name": "\(name)",
       "shard": "\(shard)",
       "dtype": "U8",
-      "shape": [\(length)],
+      "shape": \(arrayJSON(shape)),
       "data_offsets": [0, \(length)],
       "byte_offset": \(offset),
       "byte_length": \(length)
     }
     """
+}
+
+private func arrayJSON(_ values: [Int]) -> String {
+    "[\(values.map(String.init).joined(separator: ","))]"
 }
 
 private func temporaryDirectory() throws -> URL {

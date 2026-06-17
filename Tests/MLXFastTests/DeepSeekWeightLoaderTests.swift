@@ -80,6 +80,103 @@ func deepSeekWeightLoaderReadsExpertManifestTensor() throws {
 }
 
 @Test
+func deepSeekWeightLoaderBuildsAffineQuantizedDenseLinearWeight() throws {
+    let fixture = try makeWeightLoaderFixture(
+        denseTensors: [
+            TensorFixture(
+                name: "model.layers.0.attn.wq_a.weight",
+                dtype: "U32",
+                shape: [2, 1],
+                data: uint32Bytes([1, 2])
+            ),
+            TensorFixture(
+                name: "model.layers.0.attn.wq_a.scales",
+                dtype: "BF16",
+                shape: [2, 2],
+                data: Data(repeating: 0, count: 8)
+            ),
+            TensorFixture(
+                name: "model.layers.0.attn.wq_a.biases",
+                dtype: "BF16",
+                shape: [2, 2],
+                data: Data(repeating: 0, count: 8)
+            ),
+        ],
+        expertTensors: [
+            TensorFixture(
+                name: "model.layers.0.ffn.switch_mlp.gate_proj.weight",
+                dtype: "U8",
+                shape: [1],
+                data: Data([1])
+            )
+        ]
+    )
+
+    let loader = try DeepSeekWeightLoader(weightsPath: fixture.weights.path)
+    let weight = try loader.denseLinearWeight(
+        candidates: DeepSeekWeightNames.attention(0, "wq_a.weight"),
+        expectedShape: [2, 8]
+    )
+
+    #expect(weight.isQuantized)
+    #expect(weight.shape == [2, 8])
+    #expect(weight.weight.shape == [2, 1])
+    #expect(weight.scales?.shape == [2, 2])
+    #expect(weight.biases?.shape == [2, 2])
+    #expect(weight.bits == 4)
+    #expect(weight.groupSize == 4)
+    #expect(weight.mode == .affine)
+}
+
+@Test
+func deepSeekWeightLoaderSlicesStackedQuantizedRoutedExpert() throws {
+    let fixture = try makeWeightLoaderFixture(
+        denseTensors: [
+            TensorFixture(
+                name: "model.embed_tokens.weight",
+                dtype: "U8",
+                shape: [1],
+                data: Data([1])
+            )
+        ],
+        expertTensors: [
+            TensorFixture(
+                name: "model.layers.0.ffn.switch_mlp.gate_proj.weight",
+                dtype: "U32",
+                shape: [3, 2, 1],
+                data: uint32Bytes([1, 2, 3, 4, 5, 6])
+            ),
+            TensorFixture(
+                name: "model.layers.0.ffn.switch_mlp.gate_proj.scales",
+                dtype: "U8",
+                shape: [3, 2, 2],
+                data: Data(0..<12)
+            ),
+        ]
+    )
+
+    let loader = try DeepSeekWeightLoader(weightsPath: fixture.weights.path)
+    let weight = try loader.expertLinearWeight(
+        candidates: DeepSeekWeightNames.routedExpert(
+            layerIndex: 0,
+            expertIndex: 1,
+            projection: .gate
+        ),
+        expectedShape: [2, 8],
+        expertIndex: 1
+    )
+
+    #expect(weight.isQuantized)
+    #expect(weight.shape == [2, 8])
+    #expect(weight.weight.shape == [2, 1])
+    #expect(weight.scales?.shape == [2, 2])
+    #expect(weight.biases == nil)
+    #expect(weight.bits == 4)
+    #expect(weight.groupSize == 4)
+    #expect(weight.mode == .mxfp4)
+}
+
+@Test
 func deepSeekWeightLoaderBuildsSemanticRuntimeWeights() throws {
     let tensor = { (name: String, shape: [Int]) in
         TensorFixture(
@@ -268,6 +365,15 @@ private func writeSafetensors(_ path: URL, tensors: [TensorFixture]) throws {
         output.append(tensor.data)
     }
     try output.write(to: path)
+}
+
+private func uint32Bytes(_ values: [UInt32]) -> Data {
+    var data = Data()
+    for value in values {
+        var littleEndian = value.littleEndian
+        data.append(Data(bytes: &littleEndian, count: 4))
+    }
+    return data
 }
 
 private func arrayJSON(_ values: [Int]) -> String {

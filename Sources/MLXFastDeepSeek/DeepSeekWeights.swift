@@ -40,6 +40,7 @@ public enum DeepSeekWeightNames {
     ) -> [String] {
         let sanitized = projection.rawValue
         var candidates = [
+            "ffn.switch_mlp.\(sanitized).weight",
             "ffn.switch_mlp.\(expertIndex).\(sanitized).weight",
             "ffn.experts.\(expertIndex).\(sanitized).weight",
         ].flatMap { layer(layerIndex, $0) }
@@ -176,6 +177,24 @@ public struct DeepSeekWeightLoader {
         return nil
     }
 
+    public func denseLinearWeight(
+        candidates: [String],
+        expectedShape: [Int]
+    ) throws -> DeepSeekLinearWeight {
+        let name = try resolveDenseName(candidates)
+        return try linearWeight(
+            baseName: name,
+            expectedShape: expectedShape,
+            tensor: denseStore.materializedTensor(named: name),
+            companionTensor: { companionName, _ in
+                guard denseStore.record(named: companionName) != nil else {
+                    return nil
+                }
+                return try denseStore.materializedTensor(named: companionName)
+            }
+        )
+    }
+
     public func materializedExpertTensor(
         named name: String,
         expectedShape: [Int]? = nil
@@ -213,12 +232,46 @@ public struct DeepSeekWeightLoader {
         )
     }
 
-    public func embedTokens(expectedShape: [Int]? = nil) throws -> MLXArray {
-        try denseArray(candidates: DeepSeekWeightNames.embedTokens, expectedShape: expectedShape)
+    public func expertLinearWeight(
+        candidates: [String],
+        expectedShape: [Int],
+        expertIndex: Int
+    ) throws -> DeepSeekLinearWeight {
+        for candidate in candidates {
+            guard let record = expertBank.record(named: candidate) else {
+                continue
+            }
+            let isStacked = record.shape.count == expectedShape.count + 1
+                && record.shape.first.map { expertIndex < $0 } == true
+            let tensor = try isStacked
+                ? expertBank.materializedTensor(named: candidate, firstAxisIndex: expertIndex)
+                : expertBank.materializedTensor(named: candidate)
+            return try linearWeight(
+                baseName: candidate,
+                expectedShape: expectedShape,
+                tensor: tensor,
+                companionTensor: { companionName, shouldSlice in
+                    guard expertBank.record(named: companionName) != nil else {
+                        return nil
+                    }
+                    return try shouldSlice
+                        ? expertBank.materializedTensor(named: companionName, firstAxisIndex: expertIndex)
+                        : expertBank.materializedTensor(named: companionName)
+                },
+                shouldSliceCompanions: isStacked
+            )
+        }
+        throw MLXFastError.invalidInput(
+            "expert tensor not found; tried \(candidates.joined(separator: ", "))"
+        )
     }
 
-    public func lmHead(expectedShape: [Int]? = nil) throws -> MLXArray {
-        try denseArray(candidates: DeepSeekWeightNames.lmHead, expectedShape: expectedShape)
+    public func embedTokens(expectedShape: [Int]) throws -> DeepSeekLinearWeight {
+        try denseLinearWeight(candidates: DeepSeekWeightNames.embedTokens, expectedShape: expectedShape)
+    }
+
+    public func lmHead(expectedShape: [Int]) throws -> DeepSeekLinearWeight {
+        try denseLinearWeight(candidates: DeepSeekWeightNames.lmHead, expectedShape: expectedShape)
     }
 
     public func finalNorm(expectedShape: [Int]? = nil) throws -> MLXArray {
@@ -275,7 +328,7 @@ public struct DeepSeekWeightLoader {
     ) throws -> DeepSeekLocalAttentionWeights {
         let groupedInput = spec.numAttentionHeads * spec.headDim / spec.outputGroups
         return try DeepSeekLocalAttentionWeights(
-            wqA: denseArray(
+            wqA: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "wq_a.weight"),
                 expectedShape: [qLoraRank, hiddenSize]
             ),
@@ -283,11 +336,11 @@ public struct DeepSeekWeightLoader {
                 candidates: DeepSeekWeightNames.attention(layerIndex, "q_norm.weight"),
                 expectedShape: [qLoraRank]
             ),
-            wqB: denseArray(
+            wqB: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "wq_b.weight"),
                 expectedShape: [spec.numAttentionHeads * spec.headDim, qLoraRank]
             ),
-            wkv: denseArray(
+            wkv: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "wkv.weight"),
                 expectedShape: [spec.headDim, hiddenSize]
             ),
@@ -295,11 +348,11 @@ public struct DeepSeekWeightLoader {
                 candidates: DeepSeekWeightNames.attention(layerIndex, "kv_norm.weight"),
                 expectedShape: [spec.headDim]
             ),
-            woA: denseArray(
+            woA: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "wo_a.weight"),
                 expectedShape: [spec.outputGroups, outputLoraRank, groupedInput]
             ),
-            woB: denseArray(
+            woB: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "wo_b.weight"),
                 expectedShape: [hiddenSize, spec.outputGroups * outputLoraRank]
             ),
@@ -325,11 +378,11 @@ public struct DeepSeekWeightLoader {
         return try DeepSeekCompressedAttentionWeights(
             attention: localAttentionWeights(layerIndex: layerIndex, config: config),
             compressor: DeepSeekCompressorWeights(
-                wkv: denseArray(
+                wkv: denseLinearWeight(
                     candidates: DeepSeekWeightNames.attention(layerIndex, "compressor.wkv.weight"),
                     expectedShape: [outDim, config.hiddenSize]
                 ),
-                wgate: denseArray(
+                wgate: denseLinearWeight(
                     candidates: DeepSeekWeightNames.attention(layerIndex, "compressor.wgate.weight"),
                     expectedShape: [outDim, config.hiddenSize]
                 ),
@@ -353,20 +406,20 @@ public struct DeepSeekWeightLoader {
         let ratio = config.compressRatios[layerIndex]
         let outDim = config.indexHeadDim * (ratio == 4 ? 2 : 1)
         return try DeepSeekIndexerWeights(
-            wqB: denseArray(
+            wqB: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.wq_b.weight"),
                 expectedShape: [config.indexHeads * config.indexHeadDim, config.qLoraRank]
             ),
-            weightsProj: denseArray(
+            weightsProj: denseLinearWeight(
                 candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.weights_proj.weight"),
                 expectedShape: [config.indexHeads, config.hiddenSize]
             ),
             compressor: DeepSeekCompressorWeights(
-                wkv: denseArray(
+                wkv: denseLinearWeight(
                     candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.wkv.weight"),
                     expectedShape: [outDim, config.hiddenSize]
                 ),
-                wgate: denseArray(
+                wgate: denseLinearWeight(
                     candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.wgate.weight"),
                     expectedShape: [outDim, config.hiddenSize]
                 ),
@@ -488,15 +541,15 @@ public struct DeepSeekWeightLoader {
         intermediateSize: Int
     ) throws -> DeepSeekMLPWeights {
         try DeepSeekMLPWeights(
-            gate: denseArray(
+            gate: denseLinearWeight(
                 candidates: DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.gate_proj.weight"),
                 expectedShape: [intermediateSize, hiddenSize]
             ),
-            up: denseArray(
+            up: denseLinearWeight(
                 candidates: DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.up_proj.weight"),
                 expectedShape: [intermediateSize, hiddenSize]
             ),
-            down: denseArray(
+            down: denseLinearWeight(
                 candidates: DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.down_proj.weight"),
                 expectedShape: [hiddenSize, intermediateSize]
             )
@@ -551,5 +604,89 @@ public struct DeepSeekWeightLoader {
                 "tensor \(tensorName) shape \(actualShape) does not match expected shape \(expectedShape)"
             )
         }
+    }
+
+    private func linearWeight(
+        baseName: String,
+        expectedShape: [Int],
+        tensor: MaterializedTensor,
+        companionTensor: (_ companionName: String, _ shouldSlice: Bool) throws -> MaterializedTensor?,
+        shouldSliceCompanions: Bool = false
+    ) throws -> DeepSeekLinearWeight {
+        let scalesName = companionName(for: baseName, suffix: "scales")
+        guard tensor.dtype == .u32, let scalesTensor = try companionTensor(scalesName, shouldSliceCompanions) else {
+            try validateShape(tensor.shape, expectedShape: expectedShape, tensorName: baseName)
+            return DeepSeekLinearWeight(try bridge.makeArray(from: tensor))
+        }
+
+        let biasesTensor = try companionTensor(
+            companionName(for: baseName, suffix: "biases"),
+            shouldSliceCompanions
+        )
+        let expectedRows = expectedShape.dropLast().reduce(1, *)
+        guard
+            let expectedInput = expectedShape.last,
+            let packedInput = tensor.shape.last,
+            expectedInput > 0,
+            packedInput > 0
+        else {
+            throw MLXFastError.invalidInput("linear tensor \(baseName) has invalid expected shape \(expectedShape)")
+        }
+        let actualRows = tensor.shape.dropLast().reduce(1, *)
+        guard actualRows == expectedRows else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) has \(actualRows) output rows; expected \(expectedRows) from \(expectedShape)"
+            )
+        }
+        let packedBits = packedInput * 32
+        guard packedBits % expectedInput == 0 else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) packed input \(packedInput) is incompatible with logical input \(expectedInput)"
+            )
+        }
+        let bits = packedBits / expectedInput
+        guard [2, 4, 8].contains(bits) else {
+            throw MLXFastError.invalidInput("quantized tensor \(baseName) inferred unsupported bits=\(bits)")
+        }
+        guard let scaleGroups = scalesTensor.shape.last, scaleGroups > 0, expectedInput % scaleGroups == 0 else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) scales shape \(scalesTensor.shape) is incompatible with logical input \(expectedInput)"
+            )
+        }
+        let scaleRows = scalesTensor.shape.dropLast().reduce(1, *)
+        guard scaleRows == expectedRows else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) scales have \(scaleRows) rows; expected \(expectedRows)"
+            )
+        }
+        if let biasesTensor {
+            let biasRows = biasesTensor.shape.dropLast().reduce(1, *)
+            guard biasRows == expectedRows, biasesTensor.shape.last == scaleGroups else {
+                throw MLXFastError.invalidInput(
+                    "quantized tensor \(baseName) biases shape \(biasesTensor.shape) does not match scales shape \(scalesTensor.shape)"
+                )
+            }
+        }
+
+        let mode: QuantizationMode = biasesTensor == nil && scalesTensor.dtype == .u8 ? .mxfp4 : .affine
+        let weightArray = try bridge.makeArray(from: tensor).reshaped([expectedRows, packedInput])
+        let scalesArray = try bridge.makeArray(from: scalesTensor).reshaped([expectedRows, scaleGroups])
+        let biasesArray = try biasesTensor.map { try bridge.makeArray(from: $0).reshaped([expectedRows, scaleGroups]) }
+        return DeepSeekLinearWeight(
+            weight: weightArray,
+            scales: scalesArray,
+            biases: biasesArray,
+            logicalShape: expectedShape,
+            groupSize: expectedInput / scaleGroups,
+            bits: bits,
+            mode: mode
+        )
+    }
+
+    private func companionName(for weightName: String, suffix: String) -> String {
+        if weightName.hasSuffix(".weight") {
+            return String(weightName.dropLast(".weight".count)) + ".\(suffix)"
+        }
+        return "\(weightName).\(suffix)"
     }
 }

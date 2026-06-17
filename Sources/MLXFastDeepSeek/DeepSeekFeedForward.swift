@@ -3,14 +3,22 @@ import MLX
 import MLXFastCore
 
 public struct DeepSeekMLPWeights {
-    public let gate: MLXArray
-    public let up: MLXArray
-    public let down: MLXArray
+    public let gate: DeepSeekLinearWeight
+    public let up: DeepSeekLinearWeight
+    public let down: DeepSeekLinearWeight
 
-    public init(gate: MLXArray, up: MLXArray, down: MLXArray) {
+    public init(gate: DeepSeekLinearWeight, up: DeepSeekLinearWeight, down: DeepSeekLinearWeight) {
         self.gate = gate
         self.up = up
         self.down = down
+    }
+
+    public init(gate: MLXArray, up: MLXArray, down: MLXArray) {
+        self.init(
+            gate: DeepSeekLinearWeight(gate),
+            up: DeepSeekLinearWeight(up),
+            down: DeepSeekLinearWeight(down)
+        )
     }
 }
 

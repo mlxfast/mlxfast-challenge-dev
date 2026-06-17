@@ -15,10 +15,22 @@ public struct DeepSeekHeadHyperConnectionWeights {
 }
 
 public struct DeepSeekModelWeights {
-    public let embedTokens: MLXArray
+    public let embedTokens: DeepSeekLinearWeight
     public let finalNorm: MLXArray
     public let headHyperConnection: DeepSeekHeadHyperConnectionWeights
-    public let lmHead: MLXArray
+    public let lmHead: DeepSeekLinearWeight
+
+    public init(
+        embedTokens: DeepSeekLinearWeight,
+        finalNorm: MLXArray,
+        headHyperConnection: DeepSeekHeadHyperConnectionWeights,
+        lmHead: DeepSeekLinearWeight
+    ) {
+        self.embedTokens = embedTokens
+        self.finalNorm = finalNorm
+        self.headHyperConnection = headHyperConnection
+        self.lmHead = lmHead
+    }
 
     public init(
         embedTokens: MLXArray,
@@ -26,10 +38,12 @@ public struct DeepSeekModelWeights {
         headHyperConnection: DeepSeekHeadHyperConnectionWeights,
         lmHead: MLXArray
     ) {
-        self.embedTokens = embedTokens
-        self.finalNorm = finalNorm
-        self.headHyperConnection = headHyperConnection
-        self.lmHead = lmHead
+        self.init(
+            embedTokens: DeepSeekLinearWeight(embedTokens),
+            finalNorm: finalNorm,
+            headHyperConnection: headHyperConnection,
+            lmHead: DeepSeekLinearWeight(lmHead)
+        )
     }
 }
 
@@ -180,13 +194,13 @@ public enum DeepSeekModel {
 
     public static func initialHidden(
         inputIDs: MLXArray,
-        embedding: MLXArray,
+        embedding: DeepSeekLinearWeight,
         spec: DeepSeekModelSpec
     ) throws -> MLXArray {
         try validateInputIDs(inputIDs, spec: spec)
-        guard embedding.shape == [spec.vocabSize, spec.hiddenSize] else {
+        guard embedding.logicalShape == [spec.vocabSize, spec.hiddenSize] else {
             throw MLXFastError.invalidInput(
-                "embedding shape \(embedding.shape) expected [\(spec.vocabSize), \(spec.hiddenSize)]"
+                "embedding shape \(embedding.logicalShape) expected [\(spec.vocabSize), \(spec.hiddenSize)]"
             )
         }
 
@@ -194,6 +208,18 @@ public enum DeepSeekModel {
         return broadcast(
             embedded.expandedDimensions(axis: 2),
             to: [inputIDs.shape[0], inputIDs.shape[1], spec.hcMult, spec.hiddenSize]
+        )
+    }
+
+    public static func initialHidden(
+        inputIDs: MLXArray,
+        embedding: MLXArray,
+        spec: DeepSeekModelSpec
+    ) throws -> MLXArray {
+        try initialHidden(
+            inputIDs: inputIDs,
+            embedding: DeepSeekLinearWeight(embedding),
+            spec: spec
         )
     }
 

@@ -175,6 +175,38 @@ public final class ExpertSlotBank {
         )
     }
 
+    public func materializedTensor(named name: String, firstAxisIndex: Int) throws -> MaterializedTensor {
+        guard let record = recordsByName[name] else {
+            throw MLXFastError.invalidInput("expert tensor not found in manifest: \(name)")
+        }
+        guard let firstDimension = record.shape.first, record.shape.count >= 2 else {
+            throw MLXFastError.invalidInput("expert tensor \(name) cannot be sliced on first axis")
+        }
+        guard firstAxisIndex >= 0, firstAxisIndex < firstDimension else {
+            throw MLXFastError.invalidInput(
+                "expert tensor \(name) slice index \(firstAxisIndex) is outside 0..<\(firstDimension)"
+            )
+        }
+        guard record.byteLength % firstDimension == 0 else {
+            throw MLXFastError.invalidInput("expert tensor \(name) byte length is not divisible by first dimension")
+        }
+
+        let sliceByteLength = record.byteLength / firstDimension
+        let sliceOffset = record.byteOffset + firstAxisIndex * sliceByteLength
+        let bytes = try readBytes(
+            name: "\(record.name)[\(firstAxisIndex)]",
+            shard: record.shard,
+            byteOffset: sliceOffset,
+            byteLength: sliceByteLength
+        )
+        return try materializeTensor(
+            name: "\(record.name)[\(firstAxisIndex)]",
+            dtype: record.dtype,
+            shape: Array(record.shape.dropFirst()),
+            bytes: bytes
+        )
+    }
+
     public func validateReadableByteRanges(fileManager: FileManager = .default) throws {
         let baseURL = URL(fileURLWithPath: manifest.referencePath)
         let recordsByShard = Dictionary(grouping: manifest.expertTensors) { $0.shard }
@@ -218,8 +250,22 @@ public final class ExpertSlotBank {
     }
 
     private func readBytes(for record: ExpertTensorRecord) throws -> Data {
+        try readBytes(
+            name: record.name,
+            shard: record.shard,
+            byteOffset: record.byteOffset,
+            byteLength: record.byteLength
+        )
+    }
+
+    private func readBytes(
+        name: String,
+        shard: String,
+        byteOffset: Int,
+        byteLength: Int
+    ) throws -> Data {
         let shardPath = URL(fileURLWithPath: manifest.referencePath)
-            .appendingPathComponent(record.shard)
+            .appendingPathComponent(shard)
             .path
         let fd = open(shardPath, O_RDONLY)
         guard fd >= 0 else {
@@ -231,17 +277,17 @@ public final class ExpertSlotBank {
             close(fd)
         }
 
-        var output = Data(count: record.byteLength)
+        var output = Data(count: byteLength)
         let bytesRead = output.withUnsafeMutableBytes { buffer -> Int in
             guard let base = buffer.baseAddress else {
                 return 0
             }
-            return pread(fd, base, record.byteLength, off_t(record.byteOffset))
+            return pread(fd, base, byteLength, off_t(byteOffset))
         }
-        guard bytesRead == record.byteLength else {
-            let reason = bytesRead < 0 ? String(cString: strerror(errno)) : "short read \(bytesRead)/\(record.byteLength)"
+        guard bytesRead == byteLength else {
+            let reason = bytesRead < 0 ? String(cString: strerror(errno)) : "short read \(bytesRead)/\(byteLength)"
             throw MLXFastError.invalidInput(
-                "failed to read expert tensor \(record.name) from \(record.shard): \(reason)"
+                "failed to read expert tensor \(name) from \(shard): \(reason)"
             )
         }
         return output

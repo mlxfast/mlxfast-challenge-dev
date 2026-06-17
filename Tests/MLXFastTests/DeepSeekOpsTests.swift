@@ -36,6 +36,78 @@ func deepSeekOpsRunWhenRuntimeTestsAreEnabled() throws {
     #expect(grouped.shape == [1, 2, 1, 2])
     #expect(grouped.asArray(Float.self) == [50, 110, 390, 530])
 
+    let denseQuantizedWeight = MLXArray((0..<128).map { Float($0) / 128 }, [2, 64])
+    let (packedWeight, scales, quantBiases) = quantized(
+        denseQuantizedWeight,
+        groupSize: 64,
+        bits: 4,
+        mode: .affine
+    )
+    let quantizedWeight = DeepSeekLinearWeight(
+        weight: packedWeight,
+        scales: scales,
+        biases: quantBiases,
+        logicalShape: [2, 64],
+        groupSize: 64,
+        bits: 4,
+        mode: .affine
+    )
+    let quantizedProjected = DeepSeekOps.linear(
+        input: MLXArray(Array(repeating: Float(1), count: 64), [1, 64]),
+        weight: quantizedWeight
+    )
+    #expect(quantizedProjected.shape == [1, 2])
+
+    let (mxfp4Packed, mxfp4Scales, mxfp4Biases) = quantized(
+        denseQuantizedWeight,
+        groupSize: 32,
+        bits: 4,
+        mode: .mxfp4
+    )
+    #expect(mxfp4Biases == nil)
+    let mxfp4Weight = DeepSeekLinearWeight(
+        weight: mxfp4Packed,
+        scales: mxfp4Scales,
+        biases: nil,
+        logicalShape: [2, 64],
+        groupSize: 32,
+        bits: 4,
+        mode: .mxfp4
+    )
+    let mxfp4Projected = DeepSeekOps.linear(
+        input: MLXArray(Array(repeating: Float(1), count: 64), [1, 64]),
+        weight: mxfp4Weight
+    )
+    #expect(mxfp4Projected.shape == [1, 2])
+
+    let quantizedEmbedding = DeepSeekOps.embedding(
+        inputIDs: MLXArray([Int32(1)], [1]),
+        weight: quantizedWeight
+    )
+    #expect(quantizedEmbedding.shape == [1, 64])
+
+    let groupedDenseWeight = MLXArray((0..<256).map { Float($0) / 256 }, [4, 64])
+    let (groupedPacked, groupedScales, groupedBiases) = quantized(
+        groupedDenseWeight,
+        groupSize: 64,
+        bits: 4,
+        mode: .affine
+    )
+    let groupedQuantizedWeight = DeepSeekLinearWeight(
+        weight: groupedPacked,
+        scales: groupedScales,
+        biases: groupedBiases,
+        logicalShape: [2, 2, 64],
+        groupSize: 64,
+        bits: 4,
+        mode: .affine
+    )
+    let groupedQuantized = try DeepSeekOps.multiLinear(
+        input: MLXArray(Array(repeating: Float(1), count: 128), [1, 2, 1, 64]),
+        weight: groupedQuantizedWeight
+    )
+    #expect(groupedQuantized.shape == [1, 2, 1, 2])
+
     let gate = MLXArray([Float(0), Float(1)], [2])
     let up = MLXArray([Float(2), Float(3)], [2])
     let swiglu = DeepSeekOps.limitedSwiGLU(gate: gate, up: up, limit: 0)

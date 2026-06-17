@@ -111,29 +111,32 @@ public enum DeepSeekRoutedExperts {
         spec: DeepSeekRoutedExpertSpec
     ) throws -> DeepSeekMLPWeights {
         try DeepSeekMLPWeights(
-            gate: loader.expertArray(
+            gate: loader.expertLinearWeight(
                 candidates: DeepSeekWeightNames.routedExpert(
                     layerIndex: spec.layerIndex,
                     expertIndex: expertIndex,
                     projection: .gate
                 ),
-                expectedShape: [spec.intermediateSize, spec.hiddenSize]
+                expectedShape: [spec.intermediateSize, spec.hiddenSize],
+                expertIndex: expertIndex
             ),
-            up: loader.expertArray(
+            up: loader.expertLinearWeight(
                 candidates: DeepSeekWeightNames.routedExpert(
                     layerIndex: spec.layerIndex,
                     expertIndex: expertIndex,
                     projection: .up
                 ),
-                expectedShape: [spec.intermediateSize, spec.hiddenSize]
+                expectedShape: [spec.intermediateSize, spec.hiddenSize],
+                expertIndex: expertIndex
             ),
-            down: loader.expertArray(
+            down: loader.expertLinearWeight(
                 candidates: DeepSeekWeightNames.routedExpert(
                     layerIndex: spec.layerIndex,
                     expertIndex: expertIndex,
                     projection: .down
                 ),
-                expectedShape: [spec.hiddenSize, spec.intermediateSize]
+                expectedShape: [spec.hiddenSize, spec.intermediateSize],
+                expertIndex: expertIndex
             )
         )
     }
