@@ -2,6 +2,10 @@
 # Bootstrap system tools and build the Swift-only DeepSeek harness.
 set -euo pipefail
 
+REFERENCE_MODEL_REPO="${MLXFAST_REFERENCE_MODEL_REPO:-mlx-community/DeepSeek-V4-Flash-4bit}"
+REFERENCE_MIN_FREE_GIB="${MLXFAST_REFERENCE_MIN_FREE_GIB:-170}"
+REFERENCE_LFS_INCLUDE="${MLXFAST_REFERENCE_LFS_INCLUDE:-*.json,model*.safetensors,tokenizer*,*.tiktoken,tiktoken.model,*.txt,chat_template.jinja}"
+
 load_homebrew_shellenv() {
   local candidate
   local candidates=()
@@ -93,6 +97,21 @@ ensure_mactop() {
   fi
 }
 
+ensure_git_lfs() {
+  if command -v git-lfs >/dev/null 2>&1 && git lfs version >/dev/null 2>&1; then
+    return 0
+  fi
+
+  ensure_homebrew
+  echo "setup.sh: installing git-lfs with Homebrew"
+  brew install git-lfs
+
+  if ! command -v git-lfs >/dev/null 2>&1 || ! git lfs version >/dev/null 2>&1; then
+    echo "setup.sh: git-lfs installation finished, but git lfs is not usable" >&2
+    return 1
+  fi
+}
+
 ensure_swift_toolchain() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "setup.sh: this Swift harness targets macOS on Apple Silicon" >&2
@@ -108,6 +127,83 @@ ensure_swift_toolchain() {
     echo "setup.sh: xcodebuild was not found; install Xcode" >&2
     exit 1
   fi
+}
+
+ensure_reference_space() {
+  local directory="$1"
+  local available_kib
+  local required_kib
+
+  if ! [[ "${REFERENCE_MIN_FREE_GIB}" =~ ^[0-9]+$ ]]; then
+    echo "setup.sh: MLXFAST_REFERENCE_MIN_FREE_GIB must be an integer" >&2
+    return 1
+  fi
+
+  available_kib="$(df -Pk "${directory}" | awk 'NR == 2 {print $4}')"
+  required_kib=$((REFERENCE_MIN_FREE_GIB * 1024 * 1024))
+  if [[ -z "${available_kib}" || "${available_kib}" -lt "${required_kib}" ]]; then
+    cat >&2 <<EOF
+setup.sh: not enough free disk space for ${REFERENCE_MODEL_REPO}.
+
+Need at least ${REFERENCE_MIN_FREE_GIB} GiB free under ${directory}; available is $((available_kib / 1024 / 1024)) GiB.
+Set MLXFAST_REFERENCE_DIR to a larger SSD, or set MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1
+and place/mount the checkpoint manually.
+
+EOF
+    return 1
+  fi
+}
+
+download_reference_weights() {
+  local reference_dir="$1"
+  local parent_dir
+  local partial_dir
+  local repo_url
+
+  if [[ -f "${reference_dir}/config.json" ]]; then
+    echo "setup.sh: reference weights already present at ${reference_dir}"
+    return 0
+  fi
+
+  if [[ -e "${reference_dir}" ]]; then
+    cat >&2 <<EOF
+setup.sh: ${reference_dir} exists but does not contain config.json.
+
+Move it aside or set MLXFAST_REFERENCE_DIR to a complete checkpoint directory.
+
+EOF
+    return 1
+  fi
+
+  parent_dir="$(dirname "${reference_dir}")"
+  partial_dir="${reference_dir}.partial"
+  repo_url="${MLXFAST_REFERENCE_REPO_URL:-https://huggingface.co/${REFERENCE_MODEL_REPO}}"
+  mkdir -p "${parent_dir}"
+
+  ensure_reference_space "${parent_dir}"
+  ensure_git_lfs
+
+  if [[ -d "${partial_dir}/.git" ]]; then
+    echo "setup.sh: resuming reference weight download in ${partial_dir}"
+  elif [[ -e "${partial_dir}" ]]; then
+    echo "setup.sh: partial download path exists but is not a git repo: ${partial_dir}" >&2
+    return 1
+  else
+    echo "setup.sh: cloning ${REFERENCE_MODEL_REPO} metadata"
+    GIT_LFS_SKIP_SMUDGE=1 git clone "${repo_url}" "${partial_dir}"
+  fi
+
+  echo "setup.sh: downloading reference safetensors with git-lfs"
+  git -C "${partial_dir}" lfs install --local
+  git -C "${partial_dir}" lfs pull --include "${REFERENCE_LFS_INCLUDE}" --exclude ""
+
+  if [[ ! -f "${partial_dir}/config.json" ]]; then
+    echo "setup.sh: downloaded checkpoint is missing config.json" >&2
+    return 1
+  fi
+
+  mv "${partial_dir}" "${reference_dir}"
+  echo "setup.sh: downloaded reference weights to ${reference_dir}"
 }
 
 ensure_mactop
@@ -133,18 +229,4 @@ if [[ "${MLXFAST_SKIP_WEIGHTS_DOWNLOAD:-0}" == "1" || "${SKIP_MODEL_DOWNLOAD:-0}
   exit 0
 fi
 
-if [[ -f "${REFERENCE_DIR}/config.json" ]]; then
-  echo "setup.sh: reference weights already present at ${REFERENCE_DIR}"
-  exit 0
-fi
-
-cat >&2 <<EOF
-setup.sh: reference weights are not present at ${REFERENCE_DIR}.
-
-The Swift-only harness no longer bootstraps Python just to download weights.
-Place the DeepSeek V4 Flash checkpoint there, or rerun with:
-
-  MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1 ./setup.sh
-
-EOF
-exit 1
+download_reference_weights "${REFERENCE_DIR}"

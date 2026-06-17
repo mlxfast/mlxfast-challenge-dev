@@ -8,7 +8,7 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 ## Quickstart
 
 ```bash
-# Build the Swift harness, MLX metallib, and install mactop if needed
+# Build the Swift harness, MLX metallib, install tools, and fetch weights if needed
 ./setup.sh
 
 # Split dense weights into weights/ and write the expert streaming manifest
@@ -27,13 +27,20 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 
 The benchmark writes `score.json` in the format consumed by Darkbloom.
 
+Full model setup needs a large local or mounted SSD. The reference checkpoint is
+`mlx-community/DeepSeek-V4-Flash-4bit`, with 33 safetensors shards totaling about
+141 GiB. `setup.sh` downloads it with `git-lfs` when `reference_weights/` is
+missing and checks for at least 170 GiB free by default. Use
+`MLXFAST_REFERENCE_DIR=/Volumes/ssd/DeepSeek-V4-Flash-4bit` to point at a larger
+volume, or `MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1 ./setup.sh` when the checkpoint will
+be supplied separately.
+
 ## Why this challenge exists
 
 DeepSeek V4 Flash has 256 routed experts per layer, 6 activated per token.
-At 4-bit quantisation the full expert stack is ~30 GB — more than most Apple
-Silicon machines can hold. The baseline ships with SSD streaming: only the 6
-activated experts per token are loaded into Metal memory, keeping peak RAM
-under ~6 GB.
+The checkpoint is too large to keep fully resident on typical Apple Silicon
+machines. The baseline ships with SSD streaming: expert tensors stay on disk and
+only the routed tensors needed for the current forward pass are materialized.
 
 That baseline is functional but naive. Expert reads block the forward pass,
 there is no prefetching, no cross-layer reuse, and the weights are stored in
@@ -92,3 +99,4 @@ score.json                   written after each benchmark run
 - Xcode Metal Toolchain, installable with `xcodebuild -downloadComponent MetalToolchain`
 - CMake, used by `tools/build-mlx-metallib.sh` to build `mlx.metallib`
 - [mactop](https://github.com/metaspartan/mactop) — installed by `./setup.sh` via Homebrew when missing, or supplied with `MLXFAST_MACTOP_BIN=/path/to/mactop`
+- `git-lfs` — installed by `./setup.sh` via Homebrew when the reference checkpoint must be downloaded

@@ -33,6 +33,13 @@ Place the frozen reference checkpoint here unless overriding with
 reference_weights/DeepSeek-V4-Flash-4bit/
 ```
 
+By default `setup.sh` downloads `mlx-community/DeepSeek-V4-Flash-4bit` with
+`git-lfs` when that directory is missing. The safetensors payload is about
+141 GiB across 33 shards; `setup.sh` requires 170 GiB free by default before
+starting. Set `MLXFAST_REFERENCE_DIR` to a larger local or mounted SSD when the
+repo disk is too small, or set `MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1` when the
+checkpoint is provisioned externally.
+
 The Swift transform writes benchmark-ready weights here:
 
 ```text
