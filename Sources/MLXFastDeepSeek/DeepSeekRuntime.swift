@@ -45,11 +45,15 @@ public struct BenchmarkOptions: Equatable {
 
 public enum DeepSeekRuntime {
     public static func runCorrectness(_ options: CorrectnessOptions) throws -> CorrectnessReport {
-        let cases = try loadGoldenCases(from: options.goldenPath)
-        let config = try DeepSeekConfig.load(from: options.weightsPath)
-        let loader = try DeepSeekWeightLoader(weightsPath: options.weightsPath)
-        let weightCache = DeepSeekRuntimeWeightCache(loader: loader, config: config)
-        return runCorrectness(cases: cases, weightCache: weightCache)
+        do {
+            let cases = try loadGoldenCases(from: options.goldenPath)
+            let config = try DeepSeekConfig.load(from: options.weightsPath)
+            let loader = try DeepSeekWeightLoader(weightsPath: options.weightsPath)
+            let weightCache = DeepSeekRuntimeWeightCache(loader: loader, config: config)
+            return runCorrectness(cases: cases, weightCache: weightCache)
+        } catch {
+            return failedCorrectnessReport(checkedSteps: 0, error: "\(error)")
+        }
     }
 
     public static func benchmark(_ options: BenchmarkOptions) -> ScorePayload {

@@ -53,6 +53,24 @@ func deepSeekCorrectnessGeneratesGreedyTokensWithGrowingContext() throws {
 }
 
 @Test
+func deepSeekRuntimeCorrectnessReportsMissingArtifacts() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let report = try DeepSeekRuntime.runCorrectness(
+        CorrectnessOptions(
+            weightsPath: directory.appendingPathComponent("missing-weights").path,
+            goldenPath: directory.appendingPathComponent("missing-golden.json").path
+        )
+    )
+
+    #expect(!report.passed)
+    #expect(report.checkedSteps == 0)
+    #expect(report.firstFailingCase == nil)
+    #expect(report.error.contains("correctness golden file"))
+}
+
+@Test
 func deepSeekCorrectnessSelectsGreedyTokenWhenRuntimeTestsAreEnabled() throws {
     guard ProcessInfo.processInfo.environment["MLXFAST_RUN_MLX_RUNTIME_TESTS"] == "1" else {
         return
@@ -64,4 +82,13 @@ func deepSeekCorrectnessSelectsGreedyTokenWhenRuntimeTestsAreEnabled() throws {
     #expect(try DeepSeekCorrectness.greedyToken(
         from: MLXArray([Float(1), 2, 3, 2], [2, 2])
     ) == 0)
+}
+
+private func temporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+        UUID().uuidString,
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
 }
