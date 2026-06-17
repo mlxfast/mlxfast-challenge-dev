@@ -87,6 +87,52 @@ func deepSeekConfigLoadsNestedTextConfigAndRopeScaling() throws {
 }
 
 @Test
+func deepSeekConfigLoadsRealV4FlashShape() throws {
+    let root = try temporaryDirectory()
+    try """
+    {
+      "architectures": ["DeepseekV4ForCausalLM"],
+      "model_type": "deepseek_v4",
+      "num_hidden_layers": \(MLXFastConstants.numHiddenLayers),
+      "n_routed_experts": \(MLXFastConstants.routedExperts),
+      "num_experts_per_tok": \(MLXFastConstants.expertsPerToken),
+      "vocab_size": \(MLXFastConstants.vocabSize),
+      "hidden_size": \(MLXFastConstants.hiddenSize),
+      "intermediate_size": null,
+      "moe_intermediate_size": \(MLXFastConstants.moeIntermediateSize),
+      "num_attention_heads": \(MLXFastConstants.attentionHeads),
+      "num_key_value_heads": \(MLXFastConstants.keyValueHeads),
+      "compress_ratios": \(realV4FlashCompressRatiosJSON()),
+      "quantization": {
+        "group_size": 64,
+        "bits": 4,
+        "mode": "affine",
+        "model.layers.0.ffn.switch_mlp.gate_proj": {
+          "group_size": 32,
+          "bits": 4,
+          "mode": "mxfp4"
+        }
+      }
+    }
+    """.write(
+        to: root.appendingPathComponent("config.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let config = try DeepSeekConfig.load(from: root.path)
+
+    #expect(config.intermediateSize == MLXFastConstants.intermediateSize)
+    #expect(config.compressRatios.count == MLXFastConstants.numHiddenLayers)
+    #expect(config.compressRatios == DeepSeekConfig.defaultCompressRatios(layerCount: MLXFastConstants.numHiddenLayers))
+    #expect(config.compressRatios[0] == 0)
+    #expect(config.compressRatios[1] == 0)
+    #expect(config.compressRatios[2] == 4)
+    #expect(config.compressRatios[3] == 128)
+    #expect(config.compressRatios[42] == 4)
+}
+
+@Test
 func deepSeekConfigRejectsBadCompressionRatios() throws {
     let root = try temporaryDirectory()
     try """
@@ -121,6 +167,11 @@ private func configJSON(layers: Int, experts: Int, expertsPerToken: Int, vocab: 
 
 private func compressRatiosJSON() -> String {
     "[\(DeepSeekConfig.defaultCompressRatios(layerCount: MLXFastConstants.numHiddenLayers).map(String.init).joined(separator: ","))]"
+}
+
+private func realV4FlashCompressRatiosJSON() -> String {
+    let ratios = DeepSeekConfig.defaultCompressRatios(layerCount: MLXFastConstants.numHiddenLayers) + [0]
+    return "[\(ratios.map(String.init).joined(separator: ","))]"
 }
 
 private func temporaryDirectory() throws -> URL {

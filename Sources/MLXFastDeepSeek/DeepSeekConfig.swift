@@ -58,6 +58,15 @@ public struct DeepSeekConfig: Equatable {
             root: root,
             nested: textConfig
         )
+        let compressRatios = try normalizeCompressRatios(
+            intArrayField(
+                "compress_ratios",
+                root: root,
+                nested: textConfig,
+                defaultValue: DeepSeekConfig.defaultCompressRatios(layerCount: numHiddenLayers)
+            ),
+            layerCount: numHiddenLayers
+        )
         let config = DeepSeekConfig(
             modelType: try stringField("model_type", root: root, nested: textConfig, defaultValue: "deepseek_v4"),
             vocabSize: try intField("vocab_size", root: root, nested: textConfig),
@@ -83,12 +92,7 @@ public struct DeepSeekConfig: Equatable {
             attentionDropout: try doubleField("attention_dropout", root: root, nested: textConfig, defaultValue: 0.0),
             headDim: try intField("head_dim", root: root, nested: textConfig, defaultValue: 512),
             scoringFunc: try stringField("scoring_func", root: root, nested: textConfig, defaultValue: "sqrtsoftplus"),
-            compressRatios: try intArrayField(
-                "compress_ratios",
-                root: root,
-                nested: textConfig,
-                defaultValue: DeepSeekConfig.defaultCompressRatios(layerCount: numHiddenLayers)
-            ),
+            compressRatios: compressRatios,
             compressRopeTheta: try doubleField("compress_rope_theta", root: root, nested: textConfig, defaultValue: 160_000.0),
             hcMult: try intField("hc_mult", root: root, nested: textConfig, defaultValue: 4),
             hcSinkhornIters: try intField("hc_sinkhorn_iters", root: root, nested: textConfig, defaultValue: 20),
@@ -112,10 +116,9 @@ public struct DeepSeekConfig: Equatable {
         guard layerCount > 0 else {
             return []
         }
-        if layerCount == 1 {
-            return [0]
+        return (0..<layerCount).map { layerIndex in
+            layerIndex < 2 ? 0 : (layerIndex % 2 == 0 ? 4 : 128)
         }
-        return [0] + (0..<max(layerCount - 2, 0)).map { $0 % 2 == 0 ? 128 : 4 } + [0]
     }
 
     public func validateFrozenInvariants() throws {
@@ -199,6 +202,21 @@ private func intField(
     throw MLXFastError.invalidInput("config.json missing required field \(key)")
 }
 
+private func normalizeCompressRatios(_ ratios: [Int], layerCount: Int) throws -> [Int] {
+    guard layerCount >= 0 else {
+        throw MLXFastError.invalidInput("num_hidden_layers must be non-negative")
+    }
+    if ratios.count == layerCount {
+        return ratios
+    }
+    if ratios.count == layerCount + 1, ratios.last == 0 {
+        return Array(ratios.prefix(layerCount))
+    }
+    throw MLXFastError.invalidInput(
+        "compress_ratios count=\(ratios.count) expected \(layerCount)"
+    )
+}
+
 private func intArrayField(
     _ key: String,
     root: [String: Any],
@@ -260,9 +278,12 @@ private func stringField(
 
 private func fieldValue(_ key: String, root: [String: Any], nested: [String: Any]?) -> Any? {
     if let value = root[key] {
-        return value
+        return value is NSNull ? nil : value
     }
-    return nested?[key]
+    if let value = nested?[key] {
+        return value is NSNull ? nil : value
+    }
+    return nil
 }
 
 private func parseInt(_ value: Any, field: String) throws -> Int {
