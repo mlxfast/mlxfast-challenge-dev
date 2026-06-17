@@ -33,7 +33,9 @@ Full model setup needs a large local or mounted SSD. The reference checkpoint is
 missing and checks for at least 170 GiB free by default. Use
 `MLXFAST_REFERENCE_DIR=/Volumes/ssd/DeepSeek-V4-Flash-4bit` to point at a larger
 volume, or `MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1 ./setup.sh` when the checkpoint will
-be supplied separately.
+be supplied separately. The Swift CLI also honors `MLXFAST_REFERENCE_DIR`,
+`MLXFAST_WEIGHTS_PATH`, `MLXFAST_CORRECTNESS_GOLDEN_PATH`, and
+`MLXFAST_SCORE_PATH` as defaults; explicit CLI flags take precedence.
 
 ## Why this challenge exists
 

@@ -46,11 +46,17 @@ struct MLXFastCLI {
     private static func runTransform(_ options: ParsedOptions) throws {
         let referencePath = options.value(
             for: "--reference",
-            default: MLXFastConstants.defaultReferencePath
+            default: environmentValue(
+                "MLXFAST_REFERENCE_DIR",
+                fallback: MLXFastConstants.defaultReferencePath
+            )
         )
         let outputPath = options.value(
             for: "--output",
-            default: MLXFastConstants.defaultWeightsPath
+            default: environmentValue(
+                "MLXFAST_WEIGHTS_PATH",
+                fallback: MLXFastConstants.defaultWeightsPath
+            )
         )
         let report = try SwiftTransform.run(
             TransformOptions(referencePath: referencePath, outputPath: outputPath)
@@ -65,11 +71,17 @@ struct MLXFastCLI {
     private static func runCorrectness(_ options: ParsedOptions) throws -> Int {
         let weightsPath = options.value(
             for: "--weights",
-            default: MLXFastConstants.defaultWeightsPath
+            default: environmentValue(
+                "MLXFAST_WEIGHTS_PATH",
+                fallback: MLXFastConstants.defaultWeightsPath
+            )
         )
         let goldenPath = options.value(
             for: "--golden",
-            default: MLXFastConstants.defaultGoldenPath
+            default: environmentValue(
+                "MLXFAST_CORRECTNESS_GOLDEN_PATH",
+                fallback: MLXFastConstants.defaultGoldenPath
+            )
         )
         let report = try DeepSeekRuntime.runCorrectness(
             CorrectnessOptions(weightsPath: weightsPath, goldenPath: goldenPath)
@@ -86,11 +98,17 @@ struct MLXFastCLI {
     private static func runPreflight(_ options: ParsedOptions) throws {
         let weightsPath = options.value(
             for: "--weights",
-            default: MLXFastConstants.defaultWeightsPath
+            default: environmentValue(
+                "MLXFAST_WEIGHTS_PATH",
+                fallback: MLXFastConstants.defaultWeightsPath
+            )
         )
         let goldenPath = options.value(
             for: "--golden",
-            default: MLXFastConstants.defaultGoldenPath
+            default: environmentValue(
+                "MLXFAST_CORRECTNESS_GOLDEN_PATH",
+                fallback: MLXFastConstants.defaultGoldenPath
+            )
         )
         let report = try BenchmarkPreflight.check(
             weightsPath: weightsPath,
@@ -107,15 +125,24 @@ struct MLXFastCLI {
     private static func runBenchmark(_ options: ParsedOptions) throws {
         let weightsPath = options.value(
             for: "--weights",
-            default: MLXFastConstants.defaultWeightsPath
+            default: environmentValue(
+                "MLXFAST_WEIGHTS_PATH",
+                fallback: MLXFastConstants.defaultWeightsPath
+            )
         )
         let goldenPath = options.value(
             for: "--golden",
-            default: MLXFastConstants.defaultGoldenPath
+            default: environmentValue(
+                "MLXFAST_CORRECTNESS_GOLDEN_PATH",
+                fallback: MLXFastConstants.defaultGoldenPath
+            )
         )
         let scorePath = options.value(
             for: "--score-path",
-            default: MLXFastConstants.defaultScorePath
+            default: environmentValue(
+                "MLXFAST_SCORE_PATH",
+                fallback: MLXFastConstants.defaultScorePath
+            )
         )
         let payload = DeepSeekRuntime.benchmark(
             BenchmarkOptions(weightsPath: weightsPath, goldenPath: goldenPath)
@@ -136,6 +163,11 @@ struct MLXFastCLI {
             Swift-only DeepSeek V4 Flash harness entrypoint.
             """
         )
+    }
+
+    private static func environmentValue(_ name: String, fallback: String) -> String {
+        let value = ProcessInfo.processInfo.environment[name] ?? ""
+        return value.isEmpty ? fallback : value
     }
 }
 
