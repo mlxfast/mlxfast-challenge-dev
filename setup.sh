@@ -189,6 +189,49 @@ list_reference_shards() {
   "${SWIFT_BIN}" checkpoint-shards --index "${index_path}"
 }
 
+verify_reference_weights() {
+  local reference_dir="$1"
+  local index_path="${reference_dir}/model.safetensors.index.json"
+  local shard_list
+  local file
+  local shard_files=()
+  local missing=0
+
+  if [[ ! -f "${reference_dir}/config.json" ]]; then
+    echo "setup.sh: reference checkpoint is missing config.json at ${reference_dir}" >&2
+    return 1
+  fi
+  if [[ ! -f "${index_path}" ]]; then
+    echo "setup.sh: reference checkpoint is missing model.safetensors.index.json at ${reference_dir}" >&2
+    return 1
+  fi
+
+  if ! shard_list="$(list_reference_shards "${index_path}")"; then
+    return 1
+  fi
+  while IFS= read -r file; do
+    if [[ -n "${file}" ]]; then
+      shard_files+=("${file}")
+    fi
+  done <<< "${shard_list}"
+  if [[ "${#shard_files[@]}" -eq 0 ]]; then
+    echo "setup.sh: checkpoint index did not list any safetensors shards" >&2
+    return 1
+  fi
+
+  for file in "${shard_files[@]}"; do
+    if [[ ! -s "${reference_dir}/${file}" ]]; then
+      echo "setup.sh: reference checkpoint is missing shard ${file} at ${reference_dir}" >&2
+      missing=1
+    fi
+  done
+  if [[ "${missing}" != "0" ]]; then
+    return 1
+  fi
+
+  echo "setup.sh: verified reference checkpoint at ${reference_dir} (${#shard_files[@]} safetensors shard(s))"
+}
+
 download_reference_weights() {
   local reference_dir="$1"
   local parent_dir
@@ -199,8 +242,11 @@ download_reference_weights() {
   local shard_files=()
 
   if [[ -f "${reference_dir}/config.json" ]]; then
-    echo "setup.sh: reference weights already present at ${reference_dir}"
-    return 0
+    if verify_reference_weights "${reference_dir}"; then
+      echo "setup.sh: reference weights already present at ${reference_dir}"
+      return 0
+    fi
+    return 1
   fi
 
   if [[ -e "${reference_dir}" ]]; then
@@ -256,6 +302,7 @@ EOF
   for file in "${shard_files[@]}"; do
     download_reference_file "${file}" "${partial_dir}/${file}"
   done
+  verify_reference_weights "${partial_dir}"
 
   find "${partial_dir}" -name "*.complete" -type f -delete
   mv "${partial_dir}" "${reference_dir}"
