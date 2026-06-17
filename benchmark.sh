@@ -2,13 +2,26 @@
 # Run the Swift benchmark and emit the benchmark.json scorePath.
 set -euo pipefail
 
-# The benchmark always runs offline. Unless already inside the sandbox, prove
-# the Seatbelt profile blocks egress, then re-exec under sandbox-exec (no sudo
-# needed) so transform/runtime code never sees the network — locally or
-# in CI. The proxy vars point at a closed local port so anything that ignores
-# the profile fails fast instead of hanging.
+SCORE_PATH="${MLXFAST_SCORE_PATH:-score.json}"
+WEIGHTS_PATH="${MLXFAST_WEIGHTS_PATH:-weights}"
+GOLDEN_PATH="${MLXFAST_CORRECTNESS_GOLDEN_PATH:-correctness_golden.json}"
+REFERENCE_PATH="${MLXFAST_REFERENCE_DIR:-reference_weights/DeepSeek-V4-Flash-4bit}"
+SWIFT_BIN="${MLXFAST_SWIFT_BIN:-.build/release/mlxfast-swift}"
+MLX_METALLIB="${MLXFAST_MLX_METALLIB:-$(dirname "${SWIFT_BIN}")/mlx.metallib}"
 SANDBOX_PROFILE="${MLXFAST_SANDBOX_PROFILE:-tools/deny-network.sb}"
 
+if [[ "${MLXFAST_IN_SANDBOX:-0}" != "1" && ! -x "${SWIFT_BIN}" ]]; then
+  echo "benchmark.sh: Swift release binary missing; building"
+  mkdir -p .build/clang-module-cache
+  export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-${PWD}/.build/clang-module-cache}"
+  swift build -c release
+fi
+
+# The benchmark runtime always runs offline. Unless already inside the sandbox,
+# prove the Seatbelt profile blocks egress, then re-exec under sandbox-exec (no
+# sudo needed) so transform/runtime code never sees the network — locally or in
+# CI. The proxy vars point at a closed local port so anything that ignores the
+# profile fails fast instead of hanging.
 if [[ "${MLXFAST_IN_SANDBOX:-0}" != "1" && "${MLXFAST_NO_SANDBOX:-0}" != "1" ]]; then
   if ! command -v sandbox-exec >/dev/null 2>&1; then
     echo "benchmark.sh: sandbox-exec not found (the benchmark requires macOS)." >&2
@@ -30,18 +43,9 @@ if [[ "${MLXFAST_IN_SANDBOX:-0}" != "1" && "${MLXFAST_NO_SANDBOX:-0}" != "1" ]];
     "$0" "$@"
 fi
 
-SCORE_PATH="${MLXFAST_SCORE_PATH:-score.json}"
-WEIGHTS_PATH="${MLXFAST_WEIGHTS_PATH:-weights}"
-GOLDEN_PATH="${MLXFAST_CORRECTNESS_GOLDEN_PATH:-correctness_golden.json}"
-REFERENCE_PATH="${MLXFAST_REFERENCE_DIR:-reference_weights/DeepSeek-V4-Flash-4bit}"
-SWIFT_BIN="${MLXFAST_SWIFT_BIN:-.build/release/mlxfast-swift}"
-MLX_METALLIB="${MLXFAST_MLX_METALLIB:-$(dirname "${SWIFT_BIN}")/mlx.metallib}"
-
 if [[ ! -x "${SWIFT_BIN}" ]]; then
-  echo "benchmark.sh: Swift release binary missing; building"
-  mkdir -p .build/clang-module-cache
-  export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-${PWD}/.build/clang-module-cache}"
-  swift build -c release
+  echo "benchmark.sh: Swift release binary missing at ${SWIFT_BIN}" >&2
+  exit 1
 fi
 
 if [[ ! -f "${MLX_METALLIB}" ]]; then
