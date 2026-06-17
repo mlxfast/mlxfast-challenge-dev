@@ -3,8 +3,23 @@
 set -euo pipefail
 
 REFERENCE_MODEL_REPO="${MLXFAST_REFERENCE_MODEL_REPO:-mlx-community/DeepSeek-V4-Flash-4bit}"
+REFERENCE_REVISION="${MLXFAST_REFERENCE_REVISION:-main}"
+REFERENCE_BASE_URL="${MLXFAST_REFERENCE_BASE_URL:-https://huggingface.co/${REFERENCE_MODEL_REPO}/resolve/${REFERENCE_REVISION}}"
 REFERENCE_MIN_FREE_GIB="${MLXFAST_REFERENCE_MIN_FREE_GIB:-170}"
-REFERENCE_LFS_INCLUDE="${MLXFAST_REFERENCE_LFS_INCLUDE:-*.json,model*.safetensors,tokenizer*,*.tiktoken,tiktoken.model,*.txt,chat_template.jinja}"
+REFERENCE_FILES=(
+  "README.md"
+  "chat_template.jinja"
+  "config.json"
+  "generation_config.json"
+  "model.safetensors.index.json"
+  "tokenizer.json"
+  "tokenizer_config.json"
+)
+
+for ((shard_index = 1; shard_index <= 33; shard_index++)); do
+  printf -v shard_name "model-%05d-of-00033.safetensors" "${shard_index}"
+  REFERENCE_FILES+=("${shard_name}")
+done
 
 load_homebrew_shellenv() {
   local candidate
@@ -97,21 +112,6 @@ ensure_mactop() {
   fi
 }
 
-ensure_git_lfs() {
-  if command -v git-lfs >/dev/null 2>&1 && git lfs version >/dev/null 2>&1; then
-    return 0
-  fi
-
-  ensure_homebrew
-  echo "setup.sh: installing git-lfs with Homebrew"
-  brew install git-lfs
-
-  if ! command -v git-lfs >/dev/null 2>&1 || ! git lfs version >/dev/null 2>&1; then
-    echo "setup.sh: git-lfs installation finished, but git lfs is not usable" >&2
-    return 1
-  fi
-}
-
 ensure_swift_toolchain() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "setup.sh: this Swift harness targets macOS on Apple Silicon" >&2
@@ -154,11 +154,39 @@ EOF
   fi
 }
 
+download_reference_file() {
+  local file="$1"
+  local output_path="$2"
+  local marker_path="${output_path}.complete"
+  local url="${REFERENCE_BASE_URL%/}/${file}"
+
+  if [[ -f "${marker_path}" && -s "${output_path}" ]]; then
+    echo "setup.sh: already downloaded ${file}"
+    return 0
+  fi
+
+  if [[ "${url}" == http://* || "${url}" == https://* ]]; then
+    url="${url}?download=true"
+  fi
+
+  mkdir -p "$(dirname "${output_path}")"
+  echo "setup.sh: downloading ${file}"
+  curl \
+    --fail \
+    --location \
+    --retry 5 \
+    --retry-delay 2 \
+    --continue-at - \
+    --output "${output_path}" \
+    "${url}"
+  touch "${marker_path}"
+}
+
 download_reference_weights() {
   local reference_dir="$1"
   local parent_dir
   local partial_dir
-  local repo_url
+  local file
 
   if [[ -f "${reference_dir}/config.json" ]]; then
     echo "setup.sh: reference weights already present at ${reference_dir}"
@@ -177,31 +205,26 @@ EOF
 
   parent_dir="$(dirname "${reference_dir}")"
   partial_dir="${reference_dir}.partial"
-  repo_url="${MLXFAST_REFERENCE_REPO_URL:-https://huggingface.co/${REFERENCE_MODEL_REPO}}"
   mkdir -p "${parent_dir}"
 
   ensure_reference_space "${parent_dir}"
-  ensure_git_lfs
-
-  if [[ -d "${partial_dir}/.git" ]]; then
-    echo "setup.sh: resuming reference weight download in ${partial_dir}"
-  elif [[ -e "${partial_dir}" ]]; then
-    echo "setup.sh: partial download path exists but is not a git repo: ${partial_dir}" >&2
+  if [[ -e "${partial_dir}" && ! -d "${partial_dir}" ]]; then
+    echo "setup.sh: partial download path exists but is not a directory: ${partial_dir}" >&2
     return 1
-  else
-    echo "setup.sh: cloning ${REFERENCE_MODEL_REPO} metadata"
-    GIT_LFS_SKIP_SMUDGE=1 git clone "${repo_url}" "${partial_dir}"
   fi
+  mkdir -p "${partial_dir}"
 
-  echo "setup.sh: downloading reference safetensors with git-lfs"
-  git -C "${partial_dir}" lfs install --local
-  git -C "${partial_dir}" lfs pull --include "${REFERENCE_LFS_INCLUDE}" --exclude ""
+  echo "setup.sh: downloading ${REFERENCE_MODEL_REPO} from ${REFERENCE_BASE_URL}"
+  for file in "${REFERENCE_FILES[@]}"; do
+    download_reference_file "${file}" "${partial_dir}/${file}"
+  done
 
   if [[ ! -f "${partial_dir}/config.json" ]]; then
     echo "setup.sh: downloaded checkpoint is missing config.json" >&2
     return 1
   fi
 
+  find "${partial_dir}" -name "*.complete" -type f -delete
   mv "${partial_dir}" "${reference_dir}"
   echo "setup.sh: downloaded reference weights to ${reference_dir}"
 }

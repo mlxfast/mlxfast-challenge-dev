@@ -29,8 +29,9 @@ The benchmark writes `score.json` in the format consumed by Darkbloom.
 
 Full model setup needs a large local or mounted SSD. The reference checkpoint is
 `mlx-community/DeepSeek-V4-Flash-4bit`, with 33 safetensors shards totaling about
-141 GiB. `setup.sh` downloads it with `git-lfs` when `reference_weights/` is
-missing and checks for at least 170 GiB free by default. Use
+141 GiB. `setup.sh` downloads it directly from Hugging Face with resumable
+`curl` requests when `reference_weights/` is missing and checks for at least
+170 GiB free by default. Use
 `MLXFAST_REFERENCE_DIR=/Volumes/ssd/DeepSeek-V4-Flash-4bit` to point at a larger
 volume, or `MLXFAST_SKIP_WEIGHTS_DOWNLOAD=1 ./setup.sh` when the checkpoint will
 be supplied separately. The Swift CLI also honors `MLXFAST_REFERENCE_DIR`,
@@ -101,4 +102,3 @@ score.json                   written after each benchmark run
 - Xcode Metal Toolchain, installable with `xcodebuild -downloadComponent MetalToolchain`
 - CMake, used by `tools/build-mlx-metallib.sh` to build `mlx.metallib`
 - [mactop](https://github.com/metaspartan/mactop) — installed by `./setup.sh` via Homebrew when missing, or supplied with `MLXFAST_MACTOP_BIN=/path/to/mactop`
-- `git-lfs` — installed by `./setup.sh` via Homebrew when the reference checkpoint must be downloaded
