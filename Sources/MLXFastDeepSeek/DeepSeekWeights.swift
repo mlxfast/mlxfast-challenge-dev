@@ -274,6 +274,31 @@ public struct DeepSeekWeightLoader {
         try denseLinearWeight(candidates: DeepSeekWeightNames.lmHead, expectedShape: expectedShape)
     }
 
+    public func validateRequiredMetadata(config: DeepSeekConfig) throws {
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.embedTokens,
+            expectedShape: [config.vocabSize, config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.finalNorm,
+            expectedShape: [config.hiddenSize]
+        )
+        try validateHeadHyperConnectionMetadata(config: config)
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.lmHead,
+            expectedShape: [config.vocabSize, config.hiddenSize]
+        )
+
+        for layerIndex in 0..<config.numHiddenLayers {
+            try validateBlockMetadata(layerIndex: layerIndex, config: config)
+            try validateLocalAttentionMetadata(layerIndex: layerIndex, config: config)
+            if config.compressRatios[layerIndex] != 0 {
+                try validateCompressedAttentionMetadata(layerIndex: layerIndex, config: config)
+            }
+            try validateMoEMetadata(layerIndex: layerIndex, config: config)
+        }
+    }
+
     public func finalNorm(expectedShape: [Int]? = nil) throws -> MLXArray {
         try denseArray(candidates: DeepSeekWeightNames.finalNorm, expectedShape: expectedShape)
     }
@@ -602,6 +627,425 @@ public struct DeepSeekWeightLoader {
         guard actualShape == expectedShape else {
             throw MLXFastError.invalidInput(
                 "tensor \(tensorName) shape \(actualShape) does not match expected shape \(expectedShape)"
+            )
+        }
+    }
+
+    private func validateHeadHyperConnectionMetadata(config: DeepSeekConfig) throws {
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.hcHeadFn,
+            expectedShape: [config.hcMult, config.hcMult * config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.hcHeadBase,
+            expectedShape: [config.hcMult]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.hcHeadScale,
+            expectedShape: [1]
+        )
+    }
+
+    private func validateBlockMetadata(layerIndex: Int, config: DeepSeekConfig) throws {
+        let spec = DeepSeekBlockSpec(config: config)
+        let mix = (2 + spec.hcMult) * spec.hcMult
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attentionNorm(layerIndex),
+            expectedShape: [config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.feedForwardNorm(layerIndex),
+            expectedShape: [config.hiddenSize]
+        )
+        for block in [DeepSeekHyperConnectionBlock.attention, .feedForward] {
+            try validateDenseTensorMetadata(
+                candidates: DeepSeekWeightNames.hyperConnection(
+                    layerIndex: layerIndex,
+                    block: block,
+                    component: .fn
+                ),
+                expectedShape: [mix, spec.hcMult * config.hiddenSize]
+            )
+            try validateDenseTensorMetadata(
+                candidates: DeepSeekWeightNames.hyperConnection(
+                    layerIndex: layerIndex,
+                    block: block,
+                    component: .base
+                ),
+                expectedShape: [mix]
+            )
+            try validateDenseTensorMetadata(
+                candidates: DeepSeekWeightNames.hyperConnection(
+                    layerIndex: layerIndex,
+                    block: block,
+                    component: .scale
+                ),
+                expectedShape: [3]
+            )
+        }
+    }
+
+    private func validateLocalAttentionMetadata(layerIndex: Int, config: DeepSeekConfig) throws {
+        let spec = DeepSeekLocalAttentionSpec(config: config)
+        let groupedInput = spec.numAttentionHeads * spec.headDim / spec.outputGroups
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "wq_a.weight"),
+            expectedShape: [config.qLoraRank, config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "q_norm.weight"),
+            expectedShape: [config.qLoraRank]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "wq_b.weight"),
+            expectedShape: [spec.numAttentionHeads * spec.headDim, config.qLoraRank]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "wkv.weight"),
+            expectedShape: [spec.headDim, config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "kv_norm.weight"),
+            expectedShape: [spec.headDim]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "wo_a.weight"),
+            expectedShape: [spec.outputGroups, config.outputLoraRank, groupedInput]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "wo_b.weight"),
+            expectedShape: [config.hiddenSize, spec.outputGroups * config.outputLoraRank]
+        )
+        if config.attentionBias {
+            try validateOptionalDenseTensorMetadata(
+                candidates: DeepSeekWeightNames.attention(layerIndex, "wo_b.bias"),
+                expectedShape: [config.hiddenSize]
+            )
+        }
+        try validateOptionalDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "attn_sink"),
+            expectedShape: [spec.numAttentionHeads]
+        )
+    }
+
+    private func validateCompressedAttentionMetadata(layerIndex: Int, config: DeepSeekConfig) throws {
+        let ratio = config.compressRatios[layerIndex]
+        let outDim = config.headDim * (ratio == 4 ? 2 : 1)
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "compressor.wkv.weight"),
+            expectedShape: [outDim, config.hiddenSize]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "compressor.wgate.weight"),
+            expectedShape: [outDim, config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "compressor.ape"),
+            expectedShape: [ratio, outDim]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "compressor.norm.weight"),
+            expectedShape: [config.headDim]
+        )
+        if ratio == 4 {
+            try validateIndexerMetadata(layerIndex: layerIndex, config: config)
+        }
+    }
+
+    private func validateIndexerMetadata(layerIndex: Int, config: DeepSeekConfig) throws {
+        let ratio = config.compressRatios[layerIndex]
+        let outDim = config.indexHeadDim * (ratio == 4 ? 2 : 1)
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.wq_b.weight"),
+            expectedShape: [config.indexHeads * config.indexHeadDim, config.qLoraRank]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.weights_proj.weight"),
+            expectedShape: [config.indexHeads, config.hiddenSize]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.wkv.weight"),
+            expectedShape: [outDim, config.hiddenSize]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.wgate.weight"),
+            expectedShape: [outDim, config.hiddenSize]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.ape"),
+            expectedShape: [ratio, outDim]
+        )
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.norm.weight"),
+            expectedShape: [config.indexHeadDim]
+        )
+    }
+
+    private func validateMoEMetadata(layerIndex: Int, config: DeepSeekConfig) throws {
+        try validateDenseTensorMetadata(
+            candidates: DeepSeekWeightNames.feedForward(layerIndex, "gate.weight"),
+            expectedShape: [config.routedExperts, config.hiddenSize]
+        )
+        if layerIndex < config.numHashLayers {
+            try validateOptionalDenseTensorMetadata(
+                candidates: DeepSeekWeightNames.feedForward(layerIndex, "gate.tid2eid"),
+                expectedShape: [config.vocabSize, config.expertsPerToken]
+            )
+        } else {
+            try validateOptionalDenseTensorMetadata(
+                candidates: DeepSeekWeightNames.feedForward(layerIndex, "gate.e_score_correction_bias"),
+                expectedShape: [config.routedExperts]
+            )
+        }
+
+        let sharedIntermediateSize = config.moeIntermediateSize * config.sharedExperts
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.gate_proj.weight"),
+            expectedShape: [sharedIntermediateSize, config.hiddenSize]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.up_proj.weight"),
+            expectedShape: [sharedIntermediateSize, config.hiddenSize]
+        )
+        try validateDenseLinearMetadata(
+            candidates: DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.down_proj.weight"),
+            expectedShape: [config.hiddenSize, sharedIntermediateSize]
+        )
+
+        try validateRoutedExpertLinearMetadata(
+            layerIndex: layerIndex,
+            projection: .gate,
+            config: config,
+            expectedShape: [config.moeIntermediateSize, config.hiddenSize]
+        )
+        try validateRoutedExpertLinearMetadata(
+            layerIndex: layerIndex,
+            projection: .up,
+            config: config,
+            expectedShape: [config.moeIntermediateSize, config.hiddenSize]
+        )
+        try validateRoutedExpertLinearMetadata(
+            layerIndex: layerIndex,
+            projection: .down,
+            config: config,
+            expectedShape: [config.hiddenSize, config.moeIntermediateSize]
+        )
+    }
+
+    private func validateDenseTensorMetadata(candidates: [String], expectedShape: [Int]) throws {
+        let name = try resolveDenseName(candidates)
+        guard let record = denseStore.record(named: name) else {
+            throw MLXFastError.invalidInput("dense tensor not found: \(name)")
+        }
+        try validateShape(record.shape, expectedShape: expectedShape, tensorName: name)
+    }
+
+    private func validateOptionalDenseTensorMetadata(candidates: [String], expectedShape: [Int]) throws {
+        for candidate in candidates {
+            guard let record = denseStore.record(named: candidate) else {
+                continue
+            }
+            try validateShape(record.shape, expectedShape: expectedShape, tensorName: candidate)
+            return
+        }
+    }
+
+    private func validateDenseLinearMetadata(candidates: [String], expectedShape: [Int]) throws {
+        let name = try resolveDenseName(candidates)
+        guard let record = denseStore.record(named: name) else {
+            throw MLXFastError.invalidInput("dense tensor not found: \(name)")
+        }
+        try validateLinearMetadata(
+            baseName: name,
+            dtype: try TensorDType.parse(record.dtype),
+            shape: record.shape,
+            expectedShape: expectedShape,
+            companionMetadata: { companionName, _ in
+                guard let companion = denseStore.record(named: companionName) else {
+                    return nil
+                }
+                return (
+                    dtype: try TensorDType.parse(companion.dtype),
+                    shape: companion.shape
+                )
+            }
+        )
+    }
+
+    private func validateRoutedExpertLinearMetadata(
+        layerIndex: Int,
+        projection: DeepSeekExpertProjection,
+        config: DeepSeekConfig,
+        expectedShape: [Int]
+    ) throws {
+        for candidate in DeepSeekWeightNames.routedExpert(
+            layerIndex: layerIndex,
+            expertIndex: 0,
+            projection: projection
+        ) {
+            guard let record = expertBank.record(named: candidate),
+                  record.shape.count == expectedShape.count + 1
+            else {
+                continue
+            }
+            guard record.shape.first == config.routedExperts else {
+                throw MLXFastError.invalidInput(
+                    "stacked expert tensor \(candidate) first dimension \(record.shape.first ?? -1) expected \(config.routedExperts)"
+                )
+            }
+            try validateExpertLinearMetadata(
+                record: record,
+                expectedShape: expectedShape,
+                expertIndex: 0,
+                shouldSlice: true
+            )
+            return
+        }
+
+        for expertIndex in 0..<config.routedExperts {
+            try validateExpertLinearMetadata(
+                candidates: DeepSeekWeightNames.routedExpert(
+                    layerIndex: layerIndex,
+                    expertIndex: expertIndex,
+                    projection: projection
+                ),
+                expectedShape: expectedShape,
+                expertIndex: expertIndex
+            )
+        }
+    }
+
+    private func validateExpertLinearMetadata(
+        candidates: [String],
+        expectedShape: [Int],
+        expertIndex: Int
+    ) throws {
+        for candidate in candidates {
+            guard let record = expertBank.record(named: candidate) else {
+                continue
+            }
+            let shouldSlice = record.shape.count == expectedShape.count + 1
+                && record.shape.first.map { expertIndex < $0 } == true
+            try validateExpertLinearMetadata(
+                record: record,
+                expectedShape: expectedShape,
+                expertIndex: expertIndex,
+                shouldSlice: shouldSlice
+            )
+            return
+        }
+        throw MLXFastError.invalidInput(
+            "expert tensor not found; tried \(candidates.joined(separator: ", "))"
+        )
+    }
+
+    private func validateExpertLinearMetadata(
+        record: ExpertTensorRecord,
+        expectedShape: [Int],
+        expertIndex: Int,
+        shouldSlice: Bool
+    ) throws {
+        let shape = shouldSlice ? Array(record.shape.dropFirst()) : record.shape
+        try validateLinearMetadata(
+            baseName: record.name,
+            dtype: try TensorDType.parse(record.dtype),
+            shape: shape,
+            expectedShape: expectedShape,
+            companionMetadata: { companionName, shouldSliceCompanion in
+                guard let companion = expertBank.record(named: companionName) else {
+                    return nil
+                }
+                if shouldSliceCompanion {
+                    guard companion.shape.count >= 2,
+                          companion.shape.first.map({ expertIndex < $0 }) == true
+                    else {
+                        throw MLXFastError.invalidInput(
+                            "expert tensor \(companionName) cannot be sliced at expert \(expertIndex)"
+                        )
+                    }
+                    return (
+                        dtype: try TensorDType.parse(companion.dtype),
+                        shape: Array(companion.shape.dropFirst())
+                    )
+                }
+                return (
+                    dtype: try TensorDType.parse(companion.dtype),
+                    shape: companion.shape
+                )
+            },
+            shouldSliceCompanions: shouldSlice
+        )
+    }
+
+    private func validateLinearMetadata(
+        baseName: String,
+        dtype: TensorDType,
+        shape: [Int],
+        expectedShape: [Int],
+        companionMetadata: (_ companionName: String, _ shouldSlice: Bool) throws -> (dtype: TensorDType, shape: [Int])?,
+        shouldSliceCompanions: Bool = false
+    ) throws {
+        let scalesName = companionName(for: baseName, suffix: "scales")
+        guard dtype == .u32,
+              let scales = try companionMetadata(scalesName, shouldSliceCompanions)
+        else {
+            try validateShape(shape, expectedShape: expectedShape, tensorName: baseName)
+            return
+        }
+
+        let biases = try companionMetadata(
+            companionName(for: baseName, suffix: "biases"),
+            shouldSliceCompanions
+        )
+        let expectedRows = expectedShape.dropLast().reduce(1, *)
+        guard
+            let expectedInput = expectedShape.last,
+            let packedInput = shape.last,
+            expectedInput > 0,
+            packedInput > 0
+        else {
+            throw MLXFastError.invalidInput("linear tensor \(baseName) has invalid expected shape \(expectedShape)")
+        }
+        let actualRows = shape.dropLast().reduce(1, *)
+        guard actualRows == expectedRows else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) has \(actualRows) output rows; expected \(expectedRows) from \(expectedShape)"
+            )
+        }
+        let packedBits = packedInput * 32
+        guard packedBits % expectedInput == 0 else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) packed input \(packedInput) is incompatible with logical input \(expectedInput)"
+            )
+        }
+        let bits = packedBits / expectedInput
+        guard [2, 4, 8].contains(bits) else {
+            throw MLXFastError.invalidInput("quantized tensor \(baseName) inferred unsupported bits=\(bits)")
+        }
+        guard let scaleGroups = scales.shape.last, scaleGroups > 0, expectedInput % scaleGroups == 0 else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) scales shape \(scales.shape) is incompatible with logical input \(expectedInput)"
+            )
+        }
+        let scaleRows = scales.shape.dropLast().reduce(1, *)
+        guard scaleRows == expectedRows else {
+            throw MLXFastError.invalidInput(
+                "quantized tensor \(baseName) scales have \(scaleRows) rows; expected \(expectedRows)"
+            )
+        }
+        if let biases {
+            let biasRows = biases.shape.dropLast().reduce(1, *)
+            guard biasRows == expectedRows, biases.shape.last == scaleGroups else {
+                throw MLXFastError.invalidInput(
+                    "quantized tensor \(baseName) biases shape \(biases.shape) does not match scales shape \(scales.shape)"
+                )
+            }
+        }
+
+        let groupSize = expectedInput / scaleGroups
+        if biases == nil && scales.dtype == .u8 && groupSize != 32 {
+            throw MLXFastError.invalidInput(
+                "mxfp4 tensor \(baseName) has group size \(groupSize); MLX requires group size 32"
             )
         }
     }

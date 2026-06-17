@@ -30,13 +30,15 @@ public enum BenchmarkPreflight {
         }
 
         _ = try loadGoldenCases(from: goldenPath)
-        _ = try DeepSeekConfig.load(from: weightsPath)
+        let config = try DeepSeekConfig.load(from: weightsPath)
 
         let denseStore = try DenseTensorStore(weightsPath: weightsPath)
         try denseStore.validateReadableByteRanges()
 
         let expertBank = try ExpertSlotBank(manifestPath: "\(weightsPath)/experts/manifest.json")
         try expertBank.validateReadableByteRanges()
+        try DeepSeekWeightLoader(denseStore: denseStore, expertBank: expertBank)
+            .validateRequiredMetadata(config: config)
 
         return BenchmarkPreflightReport(
             weightsPath: weightsPath,

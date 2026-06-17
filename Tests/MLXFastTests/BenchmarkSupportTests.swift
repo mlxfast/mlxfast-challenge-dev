@@ -112,6 +112,19 @@ func benchmarkPreflightRejectsMalformedGolden() throws {
 }
 
 @Test
+func benchmarkPreflightRejectsMissingSemanticTensor() throws {
+    let fixture = try makePreflightFixture(omitDenseTensorName: DeepSeekWeightNames.finalNorm[0])
+
+    #expect(throws: MLXFastError.self) {
+        _ = try BenchmarkPreflight.check(
+            weightsPath: fixture.weights.path,
+            goldenPath: fixture.golden.path,
+            environment: ["MLXFAST_MACTOP_BIN": fixture.mactop.path]
+        )
+    }
+}
+
+@Test
 func benchmarkPreflightRejectsUnreadableExpertByteRange() throws {
     let fixture = try makePreflightFixture(expertByteLengthOverride: 1_000_000)
 
@@ -140,6 +153,7 @@ private struct TensorFixture {
 private func makePreflightFixture(
     writeManifest: Bool = true,
     goldenContents: String? = nil,
+    omitDenseTensorName: String? = nil,
     expertByteLengthOverride: Int? = nil
 ) throws -> PreflightFixture {
     let directory = try temporaryDirectory()
@@ -156,34 +170,27 @@ private func makePreflightFixture(
         encoding: .utf8
     )
 
-    let denseTensor = TensorFixture(
-        name: "model.embed_tokens.weight",
-        dtype: "U8",
-        shape: [1],
-        data: Data([1])
-    )
+    var denseTensors = requiredDenseTensorFixtures()
+    if let omitDenseTensorName {
+        denseTensors.removeAll { $0.name == omitDenseTensorName }
+    }
     let denseShard = "model-00001.safetensors"
-    try writeSafetensors(weights.appendingPathComponent(denseShard), tensors: [denseTensor])
+    try writeSafetensors(weights.appendingPathComponent(denseShard), tensors: denseTensors)
     try writeIndex(
         weights.appendingPathComponent("model.safetensors.index.json"),
-        tensors: [denseTensor],
+        tensors: denseTensors,
         shardName: denseShard
     )
 
-    let expertTensor = TensorFixture(
-        name: "model.layers.0.ffn.switch_mlp.0.gate_proj.weight",
-        dtype: "U8",
-        shape: [1],
-        data: Data([9])
-    )
+    let expertTensors = requiredStackedExpertTensorFixtures()
     let expertShard = "expert-00001.safetensors"
-    try writeSafetensors(reference.appendingPathComponent(expertShard), tensors: [expertTensor])
+    try writeSafetensors(reference.appendingPathComponent(expertShard), tensors: expertTensors)
     if writeManifest {
         try writeExpertManifest(
             experts.appendingPathComponent("manifest.json"),
             referencePath: reference.path,
             shardName: expertShard,
-            tensor: expertTensor,
+            tensors: expertTensors,
             expertByteLengthOverride: expertByteLengthOverride
         )
     }
@@ -229,6 +236,154 @@ private func validGoldenJSON() -> String {
     """
 }
 
+private func requiredDenseTensorFixtures() -> [TensorFixture] {
+    var tensors: [String: TensorFixture] = [:]
+    func add(_ candidates: [String], shape: [Int]) {
+        let name = candidates[0]
+        tensors[name] = TensorFixture(
+            name: name,
+            dtype: "U8",
+            shape: shape,
+            data: Data([UInt8((tensors.count % 251) + 1)])
+        )
+    }
+
+    let hidden = MLXFastConstants.hiddenSize
+    let vocab = MLXFastConstants.vocabSize
+    let layers = MLXFastConstants.numHiddenLayers
+    let routedExperts = MLXFastConstants.routedExperts
+    let moe = MLXFastConstants.moeIntermediateSize
+    let heads = MLXFastConstants.attentionHeads
+    let headDim = 512
+    let qLoraRank = 1_024
+    let outputGroups = 8
+    let outputLoraRank = 1_024
+    let groupedInput = heads * headDim / outputGroups
+    let hcMult = 4
+    let hcMix = (2 + hcMult) * hcMult
+    let indexHeads = 64
+    let indexHeadDim = 128
+    let compressRatios = DeepSeekConfig.defaultCompressRatios(layerCount: layers)
+
+    add(DeepSeekWeightNames.embedTokens, shape: [vocab, hidden])
+    add(DeepSeekWeightNames.finalNorm, shape: [hidden])
+    add(DeepSeekWeightNames.hcHeadFn, shape: [hcMult, hcMult * hidden])
+    add(DeepSeekWeightNames.hcHeadBase, shape: [hcMult])
+    add(DeepSeekWeightNames.hcHeadScale, shape: [1])
+    add(DeepSeekWeightNames.lmHead, shape: [vocab, hidden])
+
+    for layerIndex in 0..<layers {
+        add(DeepSeekWeightNames.attentionNorm(layerIndex), shape: [hidden])
+        add(DeepSeekWeightNames.feedForwardNorm(layerIndex), shape: [hidden])
+        for block in [DeepSeekHyperConnectionBlock.attention, .feedForward] {
+            add(
+                DeepSeekWeightNames.hyperConnection(layerIndex: layerIndex, block: block, component: .fn),
+                shape: [hcMix, hcMult * hidden]
+            )
+            add(
+                DeepSeekWeightNames.hyperConnection(layerIndex: layerIndex, block: block, component: .base),
+                shape: [hcMix]
+            )
+            add(
+                DeepSeekWeightNames.hyperConnection(layerIndex: layerIndex, block: block, component: .scale),
+                shape: [3]
+            )
+        }
+
+        add(DeepSeekWeightNames.attention(layerIndex, "wq_a.weight"), shape: [qLoraRank, hidden])
+        add(DeepSeekWeightNames.attention(layerIndex, "q_norm.weight"), shape: [qLoraRank])
+        add(DeepSeekWeightNames.attention(layerIndex, "wq_b.weight"), shape: [heads * headDim, qLoraRank])
+        add(DeepSeekWeightNames.attention(layerIndex, "wkv.weight"), shape: [headDim, hidden])
+        add(DeepSeekWeightNames.attention(layerIndex, "kv_norm.weight"), shape: [headDim])
+        add(
+            DeepSeekWeightNames.attention(layerIndex, "wo_a.weight"),
+            shape: [outputGroups, outputLoraRank, groupedInput]
+        )
+        add(
+            DeepSeekWeightNames.attention(layerIndex, "wo_b.weight"),
+            shape: [hidden, outputGroups * outputLoraRank]
+        )
+
+        let ratio = compressRatios[layerIndex]
+        if ratio != 0 {
+            let outDim = headDim * (ratio == 4 ? 2 : 1)
+            add(DeepSeekWeightNames.attention(layerIndex, "compressor.wkv.weight"), shape: [outDim, hidden])
+            add(DeepSeekWeightNames.attention(layerIndex, "compressor.wgate.weight"), shape: [outDim, hidden])
+            add(DeepSeekWeightNames.attention(layerIndex, "compressor.ape"), shape: [ratio, outDim])
+            add(DeepSeekWeightNames.attention(layerIndex, "compressor.norm.weight"), shape: [headDim])
+
+            if ratio == 4 {
+                let indexOutDim = indexHeadDim * 2
+                add(
+                    DeepSeekWeightNames.attention(layerIndex, "indexer.wq_b.weight"),
+                    shape: [indexHeads * indexHeadDim, qLoraRank]
+                )
+                add(
+                    DeepSeekWeightNames.attention(layerIndex, "indexer.weights_proj.weight"),
+                    shape: [indexHeads, hidden]
+                )
+                add(
+                    DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.wkv.weight"),
+                    shape: [indexOutDim, hidden]
+                )
+                add(
+                    DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.wgate.weight"),
+                    shape: [indexOutDim, hidden]
+                )
+                add(
+                    DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.ape"),
+                    shape: [ratio, indexOutDim]
+                )
+                add(
+                    DeepSeekWeightNames.attention(layerIndex, "indexer.compressor.norm.weight"),
+                    shape: [indexHeadDim]
+                )
+            }
+        }
+
+        add(DeepSeekWeightNames.feedForward(layerIndex, "gate.weight"), shape: [routedExperts, hidden])
+        add(DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.gate_proj.weight"), shape: [moe, hidden])
+        add(DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.up_proj.weight"), shape: [moe, hidden])
+        add(DeepSeekWeightNames.feedForward(layerIndex, "shared_experts.down_proj.weight"), shape: [hidden, moe])
+    }
+
+    return tensors.values.sorted { $0.name < $1.name }
+}
+
+private func requiredStackedExpertTensorFixtures() -> [TensorFixture] {
+    var tensors: [TensorFixture] = []
+    let routedExperts = MLXFastConstants.routedExperts
+    let hidden = MLXFastConstants.hiddenSize
+    let moe = MLXFastConstants.moeIntermediateSize
+    for layerIndex in 0..<MLXFastConstants.numHiddenLayers {
+        tensors.append(
+            TensorFixture(
+                name: DeepSeekWeightNames.routedExpert(layerIndex: layerIndex, expertIndex: 0, projection: .gate)[0],
+                dtype: "U8",
+                shape: [routedExperts, moe, hidden],
+                data: Data([1])
+            )
+        )
+        tensors.append(
+            TensorFixture(
+                name: DeepSeekWeightNames.routedExpert(layerIndex: layerIndex, expertIndex: 0, projection: .up)[0],
+                dtype: "U8",
+                shape: [routedExperts, moe, hidden],
+                data: Data([2])
+            )
+        )
+        tensors.append(
+            TensorFixture(
+                name: DeepSeekWeightNames.routedExpert(layerIndex: layerIndex, expertIndex: 0, projection: .down)[0],
+                dtype: "U8",
+                shape: [routedExperts, hidden, moe],
+                data: Data([3])
+            )
+        )
+    }
+    return tensors
+}
+
 private func writeIndex(_ path: URL, tensors: [TensorFixture], shardName: String) throws {
     let entries = tensors.map { #""\#($0.name)": "\#(shardName)""# }.joined(separator: ",")
     try """
@@ -244,17 +399,15 @@ private func writeExpertManifest(
     _ path: URL,
     referencePath: String,
     shardName: String,
-    tensor: TensorFixture,
+    tensors: [TensorFixture],
     expertByteLengthOverride: Int?
 ) throws {
     let header = try Safetensors.readHeader(URL(fileURLWithPath: referencePath).appendingPathComponent(shardName))
-    let info = try #require(header.tensors[tensor.name])
-    try """
-    {
-      "version": 1,
-      "source": "safetensors",
-      "reference_path": "\(referencePath)",
-      "expert_tensors": [
+    let overrideName = tensors.first?.name
+    let records = try tensors.map { tensor in
+        let info = try #require(header.tensors[tensor.name])
+        let byteLength = tensor.name == overrideName ? (expertByteLengthOverride ?? info.byteCount) : info.byteCount
+        return """
         {
           "name": "\(tensor.name)",
           "shard": "\(shardName)",
@@ -262,8 +415,17 @@ private func writeExpertManifest(
           "shape": \(arrayJSON(tensor.shape)),
           "data_offsets": [\(info.dataStart), \(info.dataEnd)],
           "byte_offset": \(Int(header.dataBaseOffset) + info.dataStart),
-          "byte_length": \(expertByteLengthOverride ?? info.byteCount)
+          "byte_length": \(byteLength)
         }
+        """
+    }.joined(separator: ",\n")
+    try """
+    {
+      "version": 1,
+      "source": "safetensors",
+      "reference_path": "\(referencePath)",
+      "expert_tensors": [
+        \(records)
       ]
     }
     """.write(to: path, atomically: true, encoding: .utf8)
