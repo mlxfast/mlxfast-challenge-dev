@@ -64,10 +64,7 @@ public final class DenseTensorStore {
         for shard in recordsByShard.keys.sorted() {
             let shardPath = URL(fileURLWithPath: weightsPath).appendingPathComponent(shard).path
             let attributes = try fileManager.attributesOfItem(atPath: shardPath)
-            guard let fileSize = attributes[.size] as? NSNumber else {
-                throw MLXFastError.invalidInput("dense shard size is unavailable: \(shardPath)")
-            }
-            let byteCount = fileSize.intValue
+            let byteCount = try fileSizeByteCount(from: attributes, path: shardPath)
             for record in recordsByShard[shard, default: []] {
                 let dtype = try TensorDType.parse(record.dtype)
                 let expectedByteLength = try expectedTensorByteCount(

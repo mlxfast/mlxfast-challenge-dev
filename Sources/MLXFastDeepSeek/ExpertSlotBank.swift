@@ -224,10 +224,7 @@ public final class ExpertSlotBank {
         for shard in recordsByShard.keys.sorted() {
             let shardPath = baseURL.appendingPathComponent(shard).path
             let attributes = try fileManager.attributesOfItem(atPath: shardPath)
-            guard let fileSize = attributes[.size] as? NSNumber else {
-                throw MLXFastError.invalidInput("expert shard size is unavailable: \(shardPath)")
-            }
-            let byteCount = fileSize.intValue
+            let byteCount = try fileSizeByteCount(from: attributes, path: shardPath)
             for record in recordsByShard[shard, default: []] {
                 let end = record.byteOffset + record.byteLength
                 guard record.byteOffset >= 0, record.byteLength > 0, end <= byteCount else {

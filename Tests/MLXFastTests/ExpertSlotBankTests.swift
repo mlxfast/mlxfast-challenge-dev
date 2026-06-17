@@ -111,6 +111,39 @@ func expertSlotBankRejectsByteLengthMismatch() throws {
 }
 
 @Test
+func expertSlotBankValidatesSparseShardLargerThanInt32() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let experts = root.appendingPathComponent("weights/experts", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: experts, withIntermediateDirectories: true)
+
+    let shard = reference.appendingPathComponent("model-00001.safetensors")
+    try Data([42]).write(to: shard)
+    try truncateFile(shard, toByteCount: Int64(Int32.max) + 1024)
+
+    let tensorName = "model.layers.0.ffn.switch_mlp.0.gate_proj.weight"
+    try manifestJSON(
+        referencePath: reference.path,
+        records: [
+            record(name: tensorName, shard: shard.lastPathComponent, offset: 0, length: 1),
+        ]
+    ).write(
+        to: experts.appendingPathComponent("manifest.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let bank = try ExpertSlotBank(
+        manifestPath: experts.appendingPathComponent("manifest.json").path,
+        capacity: 1
+    )
+    try bank.validateReadableByteRanges()
+    #expect(try bank.tensorBytes(named: tensorName) == Data([42]))
+}
+
+@Test
 func expertSlotBankEvictsLeastRecentlyUsedTensor() throws {
     let root = try temporaryDirectory()
     let reference = root.appendingPathComponent("reference", isDirectory: true)
@@ -243,6 +276,14 @@ private func record(
 
 private func arrayJSON(_ values: [Int]) -> String {
     "[\(values.map(String.init).joined(separator: ","))]"
+}
+
+private func truncateFile(_ path: URL, toByteCount byteCount: Int64) throws {
+    let handle = try FileHandle(forWritingTo: path)
+    defer {
+        try? handle.close()
+    }
+    try handle.truncate(atOffset: UInt64(byteCount))
 }
 
 private func temporaryDirectory() throws -> URL {

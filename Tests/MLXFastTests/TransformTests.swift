@@ -82,11 +82,147 @@ func transformCopiesDenseTensorsAndWritesExpertManifest() throws {
     #expect(try bank.tensorBytes(named: expertName) == Data([9, 8, 7]))
 }
 
+@Test
+func transformRejectsUnsupportedIndexShardBeforeCreatingOutput() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let output = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try writeReferenceConfig(reference)
+    try writeCheckpointIndex(
+        reference.appendingPathComponent("model.safetensors.index.json"),
+        weightMap: [
+            "model.layers.0.self_attn.q_proj.weight": "pytorch_model.bin",
+        ]
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try SwiftTransform.run(
+            TransformOptions(referencePath: reference.path, outputPath: output.path)
+        )
+    }
+    #expect(!FileManager.default.fileExists(atPath: output.path))
+}
+
+@Test
+func transformRejectsIndexTensorMissingFromShardHeaderBeforeCreatingOutput() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let output = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try writeReferenceConfig(reference)
+
+    let shardName = "model-00001-of-00001.safetensors"
+    try writeSafetensors(
+        reference.appendingPathComponent(shardName),
+        tensors: [
+            TensorFixture(name: "model.layers.0.self_attn.k_proj.weight", dtype: "U8", shape: [2], data: Data([1, 2])),
+        ]
+    )
+    try writeCheckpointIndex(
+        reference.appendingPathComponent("model.safetensors.index.json"),
+        weightMap: [
+            "model.layers.0.self_attn.q_proj.weight": shardName,
+        ]
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try SwiftTransform.run(
+            TransformOptions(referencePath: reference.path, outputPath: output.path)
+        )
+    }
+    #expect(!FileManager.default.fileExists(atPath: output.path))
+}
+
+@Test
+func transformRejectsCheckpointWithoutRoutedExpertsBeforeCreatingOutput() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let output = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try writeReferenceConfig(reference)
+
+    let denseName = "model.layers.0.self_attn.q_proj.weight"
+    let shardName = "model-00001-of-00001.safetensors"
+    try writeSafetensors(
+        reference.appendingPathComponent(shardName),
+        tensors: [
+            TensorFixture(name: denseName, dtype: "U8", shape: [2], data: Data([1, 2])),
+        ]
+    )
+    try writeCheckpointIndex(
+        reference.appendingPathComponent("model.safetensors.index.json"),
+        weightMap: [
+            denseName: shardName,
+        ]
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try SwiftTransform.run(
+            TransformOptions(referencePath: reference.path, outputPath: output.path)
+        )
+    }
+    #expect(!FileManager.default.fileExists(atPath: output.path))
+}
+
+@Test
+func transformAcceptsSparseShardLargerThanInt32() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let output = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try writeReferenceConfig(reference)
+
+    let denseName = "model.layers.0.self_attn.q_proj.weight"
+    let expertName = "model.layers.0.ffn.switch_mlp.gate_proj.weight"
+    let shardName = "model-00001-of-00001.safetensors"
+    let shard = reference.appendingPathComponent(shardName)
+    try writeSafetensors(
+        shard,
+        tensors: [
+            TensorFixture(name: denseName, dtype: "U8", shape: [1], data: Data([4])),
+            TensorFixture(name: expertName, dtype: "U8", shape: [1], data: Data([8])),
+        ]
+    )
+    try truncateFile(shard, toByteCount: Int64(Int32.max) + 1024)
+    try writeCheckpointIndex(
+        reference.appendingPathComponent("model.safetensors.index.json"),
+        weightMap: [
+            denseName: shardName,
+            expertName: shardName,
+        ]
+    )
+
+    let report = try SwiftTransform.run(
+        TransformOptions(referencePath: reference.path, outputPath: output.path)
+    )
+
+    #expect(report.denseTensorCount == 1)
+    #expect(report.expertTensorCount == 1)
+}
+
 private struct TensorFixture {
     let name: String
     let dtype: String
     let shape: [Int]
     let data: Data
+}
+
+private func writeReferenceConfig(_ reference: URL) throws {
+    try #"{"num_hidden_layers":43}"#.write(
+        to: reference.appendingPathComponent("config.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+}
+
+private func writeCheckpointIndex(_ path: URL, weightMap: [String: String]) throws {
+    let data = try JSONSerialization.data(
+        withJSONObject: ["weight_map": weightMap],
+        options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    )
+    try data.write(to: path)
 }
 
 private func writeSafetensors(_ path: URL, tensors: [TensorFixture]) throws {
@@ -114,6 +250,14 @@ private func writeSafetensors(_ path: URL, tensors: [TensorFixture]) throws {
         output.append(tensor.data)
     }
     try output.write(to: path)
+}
+
+private func truncateFile(_ path: URL, toByteCount byteCount: Int64) throws {
+    let handle = try FileHandle(forWritingTo: path)
+    defer {
+        try? handle.close()
+    }
+    try handle.truncate(atOffset: UInt64(byteCount))
 }
 
 private func tensorBytes(_ path: URL, header: SafetensorsHeader, name: String) throws -> Data {

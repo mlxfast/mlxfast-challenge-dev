@@ -80,6 +80,40 @@ func denseTensorStoreRejectsByteLengthMismatch() throws {
     }
 }
 
+@Test
+func denseTensorStoreValidatesSparseShardLargerThanInt32() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let weights = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
+
+    let shardName = "model-00001.safetensors"
+    let tensorName = "model.embed_tokens.weight"
+    let shard = weights.appendingPathComponent(shardName)
+    try writeSafetensors(
+        shard,
+        tensors: [
+            TensorFixture(name: tensorName, dtype: "U8", shape: [1], data: Data([9])),
+        ]
+    )
+    try truncateFile(shard, toByteCount: Int64(Int32.max) + 1024)
+    try """
+    {
+      "weight_map": {
+        "\(tensorName)": "\(shardName)"
+      }
+    }
+    """.write(
+        to: weights.appendingPathComponent("model.safetensors.index.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let store = try DenseTensorStore(weightsPath: weights.path)
+    try store.validateReadableByteRanges()
+    #expect(try store.tensorBytes(named: tensorName) == Data([9]))
+}
+
 private struct TensorFixture {
     let name: String
     let dtype: String
@@ -112,6 +146,14 @@ private func writeSafetensors(_ path: URL, tensors: [TensorFixture]) throws {
         output.append(tensor.data)
     }
     try output.write(to: path)
+}
+
+private func truncateFile(_ path: URL, toByteCount byteCount: Int64) throws {
+    let handle = try FileHandle(forWritingTo: path)
+    defer {
+        try? handle.close()
+    }
+    try handle.truncate(atOffset: UInt64(byteCount))
 }
 
 private func temporaryDirectory() throws -> URL {

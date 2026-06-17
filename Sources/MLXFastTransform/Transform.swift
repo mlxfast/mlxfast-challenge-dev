@@ -33,6 +33,17 @@ public enum SwiftTransform {
             description: "DeepSeek V4 Flash reference config"
         )
 
+        let index = try loadIndex(referenceDirectory)
+        try validateCheckpointIndex(index, referenceDirectory: referenceDirectory)
+        let denseKeys = Set(index.weightMap.keys.filter { !isExpertKey($0) })
+        let expertKeys = Set(index.weightMap.keys.filter { isExpertKey($0) })
+        guard !denseKeys.isEmpty else {
+            throw MLXFastError.invalidInput("checkpoint index contains no dense tensors")
+        }
+        guard !expertKeys.isEmpty else {
+            throw MLXFastError.invalidInput("checkpoint index contains no routed expert tensors")
+        }
+
         try FileManager.default.createDirectory(
             at: outputDirectory,
             withIntermediateDirectories: true
@@ -41,10 +52,6 @@ public enum SwiftTransform {
             at: expertsDirectory,
             withIntermediateDirectories: true
         )
-
-        let index = try loadIndex(referenceDirectory)
-        let denseKeys = Set(index.weightMap.keys.filter { !isExpertKey($0) })
-        let expertKeys = Set(index.weightMap.keys.filter { isExpertKey($0) })
 
         let denseKeysByShard = Dictionary(grouping: denseKeys) { key in
             index.weightMap[key] ?? ""
@@ -94,6 +101,65 @@ public enum SwiftTransform {
             return try CheckpointIndex.load(from: indexPath)
         }
         return try CheckpointIndex.buildFromSafetensors(in: referenceDirectory)
+    }
+
+    private static func validateCheckpointIndex(
+        _ index: CheckpointIndex,
+        referenceDirectory: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        guard !index.weightMap.isEmpty else {
+            throw MLXFastError.invalidInput("checkpoint index contains no tensors")
+        }
+
+        let keysByShard = Dictionary(grouping: index.weightMap.keys.sorted()) { key in
+            index.weightMap[key] ?? ""
+        }
+        for shardName in keysByShard.keys.sorted() {
+            guard !shardName.isEmpty else {
+                throw MLXFastError.invalidInput("checkpoint index contains an empty shard name")
+            }
+            guard shardName.hasSuffix(".safetensors") else {
+                throw MLXFastError.invalidInput(
+                    "checkpoint index maps tensors to unsupported shard \(shardName); expected safetensors"
+                )
+            }
+
+            let shardURL = referenceDirectory.appendingPathComponent(shardName)
+            try requireFile(shardURL.path, description: "checkpoint shard \(shardName)")
+            let header = try Safetensors.readHeader(shardURL)
+            let attributes = try fileManager.attributesOfItem(atPath: shardURL.path)
+            let byteCount = try fileSizeByteCount(from: attributes, path: shardURL.path)
+            guard header.dataBaseOffset <= UInt64(Int.max) else {
+                throw MLXFastError.invalidInput("checkpoint shard header is too large: \(shardName)")
+            }
+            let baseOffset = Int(header.dataBaseOffset)
+
+            for key in keysByShard[shardName, default: []].sorted() {
+                guard let info = header.tensors[key] else {
+                    throw MLXFastError.invalidInput(
+                        "checkpoint index lists tensor \(key) in \(shardName), but the shard header does not contain it"
+                    )
+                }
+                let dtype = try TensorDType.parse(info.dtype)
+                let expectedByteLength = try expectedTensorByteCount(
+                    name: key,
+                    dtype: dtype,
+                    shape: info.shape
+                )
+                guard info.byteCount == expectedByteLength else {
+                    throw MLXFastError.invalidInput(
+                        "checkpoint tensor \(key) byte length \(info.byteCount) does not match dtype \(info.dtype) and shape \(info.shape) expected \(expectedByteLength)"
+                    )
+                }
+                let end = baseOffset + info.dataEnd
+                guard info.dataStart >= 0, info.byteCount > 0, end <= byteCount else {
+                    throw MLXFastError.invalidInput(
+                        "checkpoint tensor \(key) byte range \(info.dataStart)..<\(info.dataEnd) exceeds shard size \(byteCount)"
+                    )
+                }
+            }
+        }
     }
 
     private static func findReferenceDirectory(_ base: URL) throws -> URL {
