@@ -97,9 +97,12 @@ public final class DenseTensorStore {
         let weightMap = try loadWeightMap(
             weightsURL.appendingPathComponent("model.safetensors.index.json")
         )
+        for shard in Set(weightMap.values).sorted() {
+            try validateSafetensorsShardName(shard, context: "dense safetensors index")
+        }
         let keysByShard = Dictionary(grouping: weightMap.keys) { key in
             weightMap[key] ?? ""
-        }.filter { !$0.key.isEmpty && $0.key.hasSuffix(".safetensors") }
+        }
 
         var records: [String: DenseTensorRecord] = [:]
         for shard in keysByShard.keys.sorted() {

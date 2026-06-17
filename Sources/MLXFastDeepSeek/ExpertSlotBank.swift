@@ -103,6 +103,7 @@ public struct ExpertManifest: Codable, Equatable {
             guard names.insert(record.name).inserted else {
                 throw MLXFastError.invalidInput("duplicate expert tensor in manifest: \(record.name)")
             }
+            try validateSafetensorsShardName(record.shard, context: "expert manifest")
             guard record.byteOffset >= 0, record.byteLength > 0 else {
                 throw MLXFastError.invalidInput("invalid byte range for expert tensor \(record.name)")
             }

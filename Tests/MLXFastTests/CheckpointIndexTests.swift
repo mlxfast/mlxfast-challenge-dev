@@ -39,6 +39,23 @@ func checkpointIndexToolsRejectsUnsupportedShard() throws {
     }
 }
 
+@Test
+func checkpointIndexToolsRejectsUnsafeShardPath() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let index = root.appendingPathComponent("model.safetensors.index.json")
+    try writeCheckpointIndex(
+        index,
+        weightMap: [
+            "a": "../model-00001.safetensors",
+        ]
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try CheckpointIndexTools.safetensorShardNames(from: index.path)
+    }
+}
+
 private func writeCheckpointIndex(_ path: URL, weightMap: [String: String]) throws {
     let data = try JSONSerialization.data(
         withJSONObject: ["weight_map": weightMap],

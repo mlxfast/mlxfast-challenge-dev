@@ -55,7 +55,7 @@ public enum SwiftTransform {
 
         let denseKeysByShard = Dictionary(grouping: denseKeys) { key in
             index.weightMap[key] ?? ""
-        }.filter { !$0.key.isEmpty && $0.key.hasSuffix(".safetensors") }
+        }
 
         var copiedDenseTensors = 0
         for shardName in denseKeysByShard.keys.sorted() {
@@ -116,14 +116,7 @@ public enum SwiftTransform {
             index.weightMap[key] ?? ""
         }
         for shardName in keysByShard.keys.sorted() {
-            guard !shardName.isEmpty else {
-                throw MLXFastError.invalidInput("checkpoint index contains an empty shard name")
-            }
-            guard shardName.hasSuffix(".safetensors") else {
-                throw MLXFastError.invalidInput(
-                    "checkpoint index maps tensors to unsupported shard \(shardName); expected safetensors"
-                )
-            }
+            try validateSafetensorsShardName(shardName, context: "checkpoint index")
 
             let shardURL = referenceDirectory.appendingPathComponent(shardName)
             try requireFile(shardURL.path, description: "checkpoint shard \(shardName)")
@@ -234,7 +227,7 @@ public enum SwiftTransform {
         var records: [[String: Any]] = []
         let expertKeysByShard = Dictionary(grouping: expertKeys) { key in
             index.weightMap[key] ?? ""
-        }.filter { !$0.key.isEmpty && $0.key.hasSuffix(".safetensors") }
+        }
 
         for shardName in expertKeysByShard.keys.sorted() {
             let shardURL = referenceDirectory.appendingPathComponent(shardName)

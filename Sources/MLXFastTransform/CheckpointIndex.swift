@@ -63,14 +63,7 @@ public enum CheckpointIndexTools {
             throw MLXFastError.invalidInput("checkpoint index contains no shard names: \(indexPath)")
         }
         for shard in shards.sorted() {
-            guard !shard.isEmpty else {
-                throw MLXFastError.invalidInput("checkpoint index contains an empty shard name: \(indexPath)")
-            }
-            guard shard.hasSuffix(".safetensors") else {
-                throw MLXFastError.invalidInput(
-                    "checkpoint index maps tensors to unsupported shard \(shard); expected safetensors"
-                )
-            }
+            try validateSafetensorsShardName(shard, context: "checkpoint index")
         }
         return shards.sorted()
     }

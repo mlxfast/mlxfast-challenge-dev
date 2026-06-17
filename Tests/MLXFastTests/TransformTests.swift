@@ -105,6 +105,28 @@ func transformRejectsUnsupportedIndexShardBeforeCreatingOutput() throws {
 }
 
 @Test
+func transformRejectsUnsafeIndexShardBeforeCreatingOutput() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let output = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try writeReferenceConfig(reference)
+    try writeCheckpointIndex(
+        reference.appendingPathComponent("model.safetensors.index.json"),
+        weightMap: [
+            "model.layers.0.self_attn.q_proj.weight": "../model-00001.safetensors",
+        ]
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try SwiftTransform.run(
+            TransformOptions(referencePath: reference.path, outputPath: output.path)
+        )
+    }
+    #expect(!FileManager.default.fileExists(atPath: output.path))
+}
+
+@Test
 func transformRejectsIndexTensorMissingFromShardHeaderBeforeCreatingOutput() throws {
     let root = try temporaryDirectory()
     let reference = root.appendingPathComponent("reference", isDirectory: true)

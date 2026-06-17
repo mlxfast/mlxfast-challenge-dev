@@ -81,6 +81,29 @@ func denseTensorStoreRejectsByteLengthMismatch() throws {
 }
 
 @Test
+func denseTensorStoreRejectsUnsafeShardPath() throws {
+    let root = try temporaryDirectory()
+    let weights = root.appendingPathComponent("weights", isDirectory: true)
+    try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
+
+    try """
+    {
+      "weight_map": {
+        "model.embed_tokens.weight": "../model-00001.safetensors"
+      }
+    }
+    """.write(
+        to: weights.appendingPathComponent("model.safetensors.index.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try DenseTensorStore(weightsPath: weights.path)
+    }
+}
+
+@Test
 func denseTensorStoreValidatesSparseShardLargerThanInt32() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

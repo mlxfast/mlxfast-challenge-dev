@@ -111,6 +111,34 @@ func expertSlotBankRejectsByteLengthMismatch() throws {
 }
 
 @Test
+func expertSlotBankRejectsUnsafeShardPath() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let experts = root.appendingPathComponent("weights/experts", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: experts, withIntermediateDirectories: true)
+
+    let tensorName = "model.layers.0.ffn.switch_mlp.0.gate_proj.weight"
+    try manifestJSON(
+        referencePath: reference.path,
+        records: [
+            record(name: tensorName, shard: "../model-00001.safetensors", offset: 0, length: 1),
+        ]
+    ).write(
+        to: experts.appendingPathComponent("manifest.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try ExpertSlotBank(
+            manifestPath: experts.appendingPathComponent("manifest.json").path,
+            capacity: 1
+        )
+    }
+}
+
+@Test
 func expertSlotBankValidatesSparseShardLargerThanInt32() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
