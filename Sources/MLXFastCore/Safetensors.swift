@@ -109,7 +109,17 @@ public enum Safetensors {
         tensorNames: [String]
     ) throws -> Int {
         let header = try readHeader(source)
-        let selected = tensorNames.compactMap { header.tensors[$0] }
+        var selected: [SafetensorInfo] = []
+        selected.reserveCapacity(tensorNames.count)
+        for name in tensorNames {
+            guard let tensor = header.tensors[name] else {
+                throw MLXFastError.invalidInput(
+                    "tensor \(name) requested from \(source.lastPathComponent) but missing from safetensors header"
+                )
+            }
+            selected.append(tensor)
+        }
+        selected.sort { $0.name < $1.name }
         guard !selected.isEmpty else {
             return 0
         }
