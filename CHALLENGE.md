@@ -49,11 +49,15 @@ weights/
   experts/manifest.json
 ```
 
-Correctness cases live at:
+Correctness cases are supplied by the benchmark operator and are intentionally
+not committed to the public repo:
 
 ```text
 correctness_golden.json
 ```
+
+Use `MLXFAST_CORRECTNESS_GOLDEN_PATH=/path/to/correctness_golden.json` when the
+file is provisioned outside the repository root.
 
 ## Editable Surface
 

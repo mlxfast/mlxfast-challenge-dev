@@ -14,7 +14,8 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 # Split dense weights into weights/ and write the expert streaming manifest
 .build/release/mlxfast-swift transform
 
-# Run the Darkbloom-compatible benchmark entrypoint
+# Run the Darkbloom-compatible benchmark entrypoint.
+# Requires the organizer-supplied correctness_golden.json.
 ./benchmark.sh
 
 # Or call the Swift CLI directly
@@ -26,6 +27,10 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 ```
 
 The benchmark writes `score.json` in the format consumed by Darkbloom.
+`score.json` is a generated local output and is not tracked. The fixed
+`correctness_golden.json` is also not tracked in the public repo; the benchmark
+operator supplies it, or points the harness at it with
+`MLXFAST_CORRECTNESS_GOLDEN_PATH=/path/to/correctness_golden.json`.
 
 Full model setup needs a large local or mounted SSD. The reference checkpoint is
 `mlx-community/DeepSeek-V4-Flash-4bit`, with 33 safetensors shards totaling about

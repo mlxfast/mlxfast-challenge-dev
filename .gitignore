@@ -19,6 +19,7 @@ results.tsv
 # Benchmark contract outputs
 score.json
 score.json.tmp
+correctness_golden.json
 
 # IDE
 .vscode/
