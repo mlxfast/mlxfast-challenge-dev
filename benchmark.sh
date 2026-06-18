@@ -116,6 +116,15 @@ else
   echo "benchmark.sh: reusing ${WEIGHTS_PATH}/ for unchanged transform source"
 fi
 
+if [[ "${MLXFAST_VERIFY_TRANSFORM:-0}" == "1" ]]; then
+  if [[ ! -f "${REFERENCE_PATH}/config.json" ]]; then
+    echo "benchmark.sh: MLXFAST_VERIFY_TRANSFORM=1 requires reference weights at ${REFERENCE_PATH}" >&2
+    exit 1
+  fi
+  echo "benchmark.sh: verifying weights are byte-equal to a clean Swift transform"
+  "${SWIFT_BIN}" verify-transform --reference "${REFERENCE_PATH}" --weights "${WEIGHTS_PATH}"
+fi
+
 rm -f "${SCORE_PATH}"
 
 "${SWIFT_BIN}" benchmark \

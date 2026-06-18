@@ -61,15 +61,17 @@ file is provisioned outside the repository root.
 
 ## Editable Surface
 
-The active implementation is Swift-only:
+The active editable surface is Swift-only and is defined by `benchmark.json`:
 
 | Path | Scope |
 |---|---|
 | `Sources/MLXFastDeepSeek/` | DeepSeek V4 Flash runtime, attention, MoE, expert streaming, correctness, benchmark timing. |
 | `Sources/MLXFastTransform/` | Offline safetensors transform and expert manifest generation. |
-| `Sources/MLXFastCore/` | Shared constants, score schema, safetensors, golden-case loading. |
-| `Sources/MLXFastCLI/` | Command-line entrypoint. |
-| `tools/build-mlx-metallib.sh` | Local MLX Metal library build helper. |
+
+`Sources/MLXFastCore/`, `Sources/MLXFastHarness/`, `Sources/MLXFastCLI/`,
+scripts, tests, `benchmark.json`, generated `weights/`, reference checkpoints,
+golden fixtures, and local scores are harness/operator files, not submission
+surface. `mlxfast-swift submit` packages only `editablePaths`.
 
 There is no Python harness path.
 
@@ -82,6 +84,18 @@ token in the failed report.
 
 The gate is intended as a first-stage filter: an implementation that fails it is
 not eligible for the longer benchmark.
+
+The gate intentionally does not port the earlier Python hidden-state or top-K
+logit comparison layers. The benchmark contract cares about the externally
+observable greedy token stream for a text-to-text DeepSeek V4 Flash run. Exact
+token-oracle checks are cleaner here because they validate the same output path
+that is timed by the benchmark, avoid ambiguous internal tensor choices around
+normalization/head-combination, and keep the hidden golden fixture small enough
+to manage privately.
+
+VLM/image inputs and speculative/MTP draft decoding are also out of scope for
+this challenge. They should only be added if the official benchmark contract
+changes to score those paths.
 
 ## Score
 
@@ -105,4 +119,7 @@ swift build -c release
 .build/release/mlxfast-swift correctness
 .build/release/mlxfast-swift preflight
 .build/release/mlxfast-swift benchmark --score-path score.json
+.build/release/mlxfast-swift verify-transform
+.build/release/mlxfast-swift clone
+.build/release/mlxfast-swift submit --output mlxfast-submission.zip
 ```

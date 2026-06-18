@@ -21,6 +21,7 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 # Or call the Swift CLI directly
 .build/release/mlxfast-swift preflight
 .build/release/mlxfast-swift benchmark --score-path score.json
+.build/release/mlxfast-swift submit --output mlxfast-submission.zip
 
 # If required model artifacts are missing, the benchmark emits a valid failed
 # score.json instead of a ranked score.
@@ -68,6 +69,10 @@ in scope. Submissions should focus on the Swift targets listed in
 The repository is Swift-only: setup, transform, correctness, and benchmark all
 run through the Swift package.
 
+`mlxfast-swift submit` reads `benchmark.json` and archives only the paths listed
+in `editablePaths`. Generated `weights/`, reference checkpoints, golden files,
+and local scores are not submitted.
+
 ## Scoring
 
 ```
@@ -89,6 +94,7 @@ Correctness is a hard gate. See CHALLENGE.md for the full correctness specificat
 Sources/
   MLXFastCLI/                Swift command-line entrypoint
   MLXFastCore/               score.json, golden cases, shared contracts
+  MLXFastHarness/            trusted benchmark/provenance helpers
   MLXFastTransform/          Swift offline weight transform
   MLXFastDeepSeek/           DeepSeek V4 Flash Swift runtime
 weights/                     transformed weights (harness loads from here)
@@ -98,6 +104,11 @@ reference_weights/           original 4-bit checkpoint (frozen, read-only)
 correctness_golden.json      fixed greedy-token correctness cases
 score.json                   written after each benchmark run
 ```
+
+For stricter organizer-side provenance, set `MLXFAST_VERIFY_TRANSFORM=1` when
+running `benchmark.sh`. That re-runs the Swift transform into a clean temporary
+directory and fails unless the submitted `weights/` tree is byte-equal to the
+clean transform output.
 
 ## Requirements
 

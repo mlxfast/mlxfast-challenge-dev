@@ -2,16 +2,14 @@ import Darwin
 import Foundation
 import MLXFastCore
 import MLXFastDeepSeek
+import MLXFastHarness
 import MLXFastTransform
 
-@main
-struct MLXFastCLI {
-    static func main() {
-        let exitCode = run(arguments: Array(CommandLine.arguments.dropFirst()))
-        exit(Int32(exitCode))
-    }
+let exitCode = MLXFastCLI.run(arguments: Array(CommandLine.arguments.dropFirst()))
+exit(Int32(exitCode))
 
-    private static func run(arguments: [String]) -> Int {
+private enum MLXFastCLI {
+    static func run(arguments: [String]) -> Int {
         guard let command = arguments.first, command != "help", command != "--help", command != "-h" else {
             printUsage()
             return 0
@@ -24,6 +22,9 @@ struct MLXFastCLI {
             case "transform":
                 try runTransform(options)
                 return 0
+            case "verify-transform":
+                try runVerifyTransform(options)
+                return 0
             case "correctness":
                 return try runCorrectness(options)
             case "preflight":
@@ -34,6 +35,15 @@ struct MLXFastCLI {
                 return 0
             case "checkpoint-shards":
                 try runCheckpointShards(options)
+                return 0
+            case "login":
+                try runLogin(options)
+                return 0
+            case "clone":
+                try runClone(options)
+                return 0
+            case "submit":
+                try runSubmit(options)
                 return 0
             default:
                 fputs("mlxfast-swift: unknown command '\(command)'\n\n", stderr)
@@ -70,6 +80,38 @@ struct MLXFastCLI {
         print("dense tensors: \(report.denseTensorCount) across \(report.denseShardCount) shard(s)")
         print("expert tensors: \(report.expertTensorCount)")
         print("expert manifest: \(report.manifestPath)")
+    }
+
+    private static func runVerifyTransform(_ options: ParsedOptions) throws {
+        try options.validate(valueOptions: ["--reference", "--weights", "--tmp-parent"])
+        let referencePath = options.value(
+            for: "--reference",
+            default: environmentValue(
+                "MLXFAST_REFERENCE_DIR",
+                fallback: MLXFastConstants.defaultReferencePath
+            )
+        )
+        let weightsPath = options.value(
+            for: "--weights",
+            default: environmentValue(
+                "MLXFAST_WEIGHTS_PATH",
+                fallback: MLXFastConstants.defaultWeightsPath
+            )
+        )
+        let temporaryParentPath = options.value(for: "--tmp-parent", default: "")
+        let report = try TransformVerifier.verify(
+            TransformVerificationOptions(
+                referencePath: referencePath,
+                weightsPath: weightsPath,
+                temporaryParentPath: temporaryParentPath.isEmpty ? nil : temporaryParentPath
+            )
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(report)
+        FileHandle.standardOutput.write(data)
+        print("")
     }
 
     private static func runCorrectness(_ options: ParsedOptions) throws -> Int {
@@ -169,15 +211,53 @@ struct MLXFastCLI {
         }
     }
 
+    private static func runLogin(_ options: ParsedOptions) throws {
+        try options.validate(valueOptions: ["--api-key"])
+        let apiKey = options.value(for: "--api-key", default: "")
+        let path = try SubmissionSupport.storeCredentials(apiKey: apiKey)
+        print("credentials: \(path)")
+    }
+
+    private static func runClone(_ options: ParsedOptions) throws {
+        try options.validate(valueOptions: ["--contract"])
+        let contractPath = options.value(for: "--contract", default: "benchmark.json")
+        let contract = try SubmissionSupport.ensureWorkspace(contractPath: contractPath)
+        print("workspace: \(contract.name)")
+        print("editable paths:")
+        for path in contract.editablePaths {
+            print("  \(path)")
+        }
+    }
+
+    private static func runSubmit(_ options: ParsedOptions) throws {
+        try options.validate(valueOptions: ["--contract", "--output"])
+        let contractPath = options.value(for: "--contract", default: "benchmark.json")
+        let outputPath = options.value(for: "--output", default: "mlxfast-submission.zip")
+        let report = try SubmissionSupport.packageEditablePaths(
+            contractPath: contractPath,
+            outputPath: outputPath
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(report)
+        FileHandle.standardOutput.write(data)
+        print("")
+    }
+
     private static func printUsage() {
         print(
             """
             Usage:
               mlxfast-swift transform [--reference PATH] [--output PATH]
+              mlxfast-swift verify-transform [--reference PATH] [--weights PATH] [--tmp-parent PATH]
               mlxfast-swift correctness [--weights PATH] [--golden PATH]
               mlxfast-swift preflight [--weights PATH] [--golden PATH]
               mlxfast-swift benchmark [--weights PATH] [--golden PATH] [--score-path PATH]
               mlxfast-swift checkpoint-shards --index PATH
+              mlxfast-swift login --api-key KEY
+              mlxfast-swift clone [--contract benchmark.json]
+              mlxfast-swift submit [--contract benchmark.json] [--output mlxfast-submission.zip]
 
             Swift-only DeepSeek V4 Flash harness entrypoint.
             """
