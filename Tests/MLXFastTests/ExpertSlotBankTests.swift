@@ -313,7 +313,7 @@ func expertStreamingConfigParsesEnvironment() {
     ])
 
     #expect(config.mode == .directNVMe)
-    #expect(config.tensorCacheCapacity == 21)
+    #expect(config.tensorCacheCapacity == 42)
     #expect(config.recordsMetrics)
 
     let defaultMetrics = ExpertStreamingConfig.fromEnvironment([:], recordsMetricsDefault: true)

@@ -6,7 +6,9 @@ public struct ExpertStreamingConfig: Equatable, Sendable {
         case directNVMe = "direct_nvme"
     }
 
-    public static let defaultTensorCacheCapacity = 128
+    public static let tensorsPerExpertRecord = 6
+    public static let defaultExpertCacheCapacity = 128
+    public static let defaultTensorCacheCapacity = defaultExpertCacheCapacity * tensorsPerExpertRecord
 
     public let mode: Mode
     public let tensorCacheCapacity: Int
@@ -28,7 +30,9 @@ public struct ExpertStreamingConfig: Equatable, Sendable {
     ) -> ExpertStreamingConfig {
         let tensorCapacity =
             parsePositiveInt(environment["MLXFAST_EXPERT_CACHE_TENSORS"])
-            ?? parsePositiveInt(environment["MLXFAST_EXPERT_CACHE_EXPERTS"]).map { $0 * 3 }
+            ?? parsePositiveInt(environment["MLXFAST_EXPERT_CACHE_EXPERTS"]).map {
+                $0 * Self.tensorsPerExpertRecord
+            }
             ?? Self.defaultTensorCacheCapacity
         return ExpertStreamingConfig(
             tensorCacheCapacity: tensorCapacity,
