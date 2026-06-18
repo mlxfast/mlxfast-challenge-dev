@@ -284,8 +284,18 @@ private enum MLXFastCLI {
     }
 
     private static func runLogin(_ options: ParsedOptions) throws {
-        try options.validate(valueOptions: ["--api-key"])
-        let apiKey = options.value(for: "--api-key", default: "")
+        try options.validate(valueOptions: ["--api-key"], allowPositionals: true)
+        let positionalAPIKeys = options.positionalArguments()
+        guard positionalAPIKeys.count <= 1 else {
+            throw MLXFastError.invalidInput("login accepts at most one positional API key")
+        }
+        guard !(options.hasValue(for: "--api-key") && !positionalAPIKeys.isEmpty) else {
+            throw MLXFastError.invalidInput("login accepts either --api-key KEY or KEY, not both")
+        }
+        let apiKey = options.value(
+            for: "--api-key",
+            default: positionalAPIKeys.first ?? environmentValue("MLXFAST_API_KEY", fallback: "")
+        )
         let path = try SubmissionSupport.storeCredentials(apiKey: apiKey)
         print("credentials: \(path)")
     }
@@ -341,7 +351,7 @@ private enum MLXFastCLI {
               mlxfast-swift benchmark [--weights PATH] [--golden PATH] [--score-path PATH]
               mlxfast-swift make-golden [--weights PATH] [--output PATH] (--prompt-file PATH | --prompt-tokens TOKENS [--name NAME])
               mlxfast-swift checkpoint-shards --index PATH
-              mlxfast-swift login --api-key KEY
+              mlxfast-swift login [--api-key KEY | KEY]
               mlxfast-swift clone [--contract benchmark.json]
               mlxfast-swift submit [--contract benchmark.json] [--output mlxfast-submission.zip] [--max-bytes N]
 
@@ -451,7 +461,15 @@ private struct ParsedOptions {
         values[name] != nil
     }
 
-    func validate(valueOptions: Set<String>, flagOptions: Set<String> = []) throws {
+    func positionalArguments() -> [String] {
+        positionals
+    }
+
+    func validate(
+        valueOptions: Set<String>,
+        flagOptions: Set<String> = [],
+        allowPositionals: Bool = false
+    ) throws {
         if let duplicate = duplicates.first {
             throw MLXFastError.invalidInput("duplicate option \(duplicate)")
         }
@@ -469,7 +487,7 @@ private struct ParsedOptions {
                 throw MLXFastError.invalidInput("unknown option \(flag)")
             }
         }
-        if let positional = positionals.first {
+        if !allowPositionals, let positional = positionals.first {
             throw MLXFastError.invalidInput("unexpected argument \(positional)")
         }
     }

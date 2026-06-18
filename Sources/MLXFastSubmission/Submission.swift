@@ -17,6 +17,21 @@ public struct SubmissionArchiveReport: Codable, Equatable {
     public let archiveSha256: String
 }
 
+public struct StoredCredentials: Codable, Equatable {
+    public let apiKey: String
+    public let storedAt: Double
+
+    public init(apiKey: String, storedAt: Double) {
+        self.apiKey = apiKey
+        self.storedAt = storedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case apiKey = "api_key"
+        case storedAt = "stored_at"
+    }
+}
+
 public enum SubmissionSupport {
     public static func ensureWorkspace(contractPath: String) throws -> ChallengeContract {
         let contract = try loadContract(at: contractPath)
@@ -77,27 +92,62 @@ public enum SubmissionSupport {
         )
     }
 
-    public static func storeCredentials(apiKey: String) throws -> String {
+    public static func credentialsPath(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> URL {
+        try credentialsDirectory(homeDirectory: homeDirectory, environment: environment)
+            .appendingPathComponent("credentials")
+    }
+
+    public static func legacyCredentialsPath(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> URL {
+        try credentialsDirectory(homeDirectory: homeDirectory, environment: environment)
+            .appendingPathComponent("credentials.json")
+    }
+
+    public static func storeCredentials(
+        apiKey: String,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        storedAt: Double = Date().timeIntervalSince1970
+    ) throws -> String {
         let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw MLXFastError.invalidInput("login requires a non-empty API key")
         }
-        let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config", isDirectory: true)
-            .appendingPathComponent("mlxfast", isDirectory: true)
+        let directory = try credentialsDirectory(homeDirectory: homeDirectory, environment: environment)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let path = directory.appendingPathComponent("credentials.json")
-        let object: [String: Any] = [
-            "api_key": trimmed,
-            "stored_at": Date().timeIntervalSince1970,
-        ]
-        let data = try JSONSerialization.data(
-            withJSONObject: object,
-            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        )
+        let path = directory.appendingPathComponent("credentials")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(StoredCredentials(apiKey: trimmed, storedAt: storedAt))
         try data.write(to: path, options: [.atomic])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
         return path.path
+    }
+
+    public static func loadCredentials(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> StoredCredentials {
+        let path = try credentialsPath(homeDirectory: homeDirectory, environment: environment)
+        let legacyPath = try legacyCredentialsPath(homeDirectory: homeDirectory, environment: environment)
+        let selectedPath = FileManager.default.fileExists(atPath: path.path) ? path : legacyPath
+        guard FileManager.default.fileExists(atPath: selectedPath.path) else {
+            throw MLXFastError.missingFile("credentials not found at \(path.path)")
+        }
+        let credentials = try JSONDecoder().decode(
+            StoredCredentials.self,
+            from: Data(contentsOf: selectedPath)
+        )
+        let trimmed = credentials.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MLXFastError.invalidInput("stored credentials contain an empty API key")
+        }
+        return StoredCredentials(apiKey: trimmed, storedAt: credentials.storedAt)
     }
 
     private struct EditableFile: Equatable {
@@ -116,6 +166,39 @@ public enum SubmissionSupport {
         "score.json",
         "weights",
     ]
+
+    private static func credentialsDirectory(
+        homeDirectory: URL,
+        environment: [String: String]
+    ) throws -> URL {
+        if let configHome = nonEmptyEnvironmentValue("MLXFAST_CONFIG_HOME", in: environment) {
+            return try absoluteDirectory(from: configHome, environmentName: "MLXFAST_CONFIG_HOME")
+                .appendingPathComponent("mlxfast", isDirectory: true)
+        }
+        if let xdgConfigHome = nonEmptyEnvironmentValue("XDG_CONFIG_HOME", in: environment) {
+            return try absoluteDirectory(from: xdgConfigHome, environmentName: "XDG_CONFIG_HOME")
+                .appendingPathComponent("mlxfast", isDirectory: true)
+        }
+        return homeDirectory
+            .appendingPathComponent(".config", isDirectory: true)
+            .appendingPathComponent("mlxfast", isDirectory: true)
+    }
+
+    private static func nonEmptyEnvironmentValue(
+        _ name: String,
+        in environment: [String: String]
+    ) -> String? {
+        let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+
+    private static func absoluteDirectory(from rawPath: String, environmentName: String) throws -> URL {
+        let expandedPath = (rawPath as NSString).expandingTildeInPath
+        guard (expandedPath as NSString).isAbsolutePath else {
+            throw MLXFastError.invalidInput("\(environmentName) must be an absolute path")
+        }
+        return URL(fileURLWithPath: expandedPath, isDirectory: true).standardizedFileURL
+    }
 
     private static func loadContract(at path: String) throws -> ChallengeContract {
         try requireFile(path, description: "benchmark contract")

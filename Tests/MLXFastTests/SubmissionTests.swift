@@ -189,6 +189,93 @@ func submissionAllowsUnlimitedSourceByteCountWhenExplicitlyConfigured() throws {
     #expect(report.archiveSha256.count == 64)
 }
 
+@Test
+func loginStoresYukonCompatibleCredentialsFile() throws {
+    let home = try temporarySubmissionDirectory()
+    let path = try SubmissionSupport.storeCredentials(
+        apiKey: "  test-key  ",
+        homeDirectory: home,
+        environment: [:],
+        storedAt: 123.5
+    )
+    let expected = home
+        .appendingPathComponent(".config", isDirectory: true)
+        .appendingPathComponent("mlxfast", isDirectory: true)
+        .appendingPathComponent("credentials")
+
+    #expect(path == expected.path)
+
+    let credentials = try SubmissionSupport.loadCredentials(homeDirectory: home, environment: [:])
+    #expect(credentials == StoredCredentials(apiKey: "test-key", storedAt: 123.5))
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: expected.path)
+    let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+    #expect(permissions.intValue & 0o777 == 0o600)
+}
+
+@Test
+func loginHonorsXDGConfigHomeForCredentialPath() throws {
+    let root = try temporarySubmissionDirectory()
+    let configHome = root.appendingPathComponent("xdg-config", isDirectory: true)
+    let path = try SubmissionSupport.storeCredentials(
+        apiKey: "test-key",
+        homeDirectory: root,
+        environment: ["XDG_CONFIG_HOME": configHome.path],
+        storedAt: 1
+    )
+
+    let expected = configHome
+        .appendingPathComponent("mlxfast", isDirectory: true)
+        .appendingPathComponent("credentials")
+    #expect(path == expected.path)
+    let credentials = try SubmissionSupport.loadCredentials(
+        homeDirectory: root,
+        environment: ["XDG_CONFIG_HOME": configHome.path]
+    )
+    #expect(credentials.apiKey == "test-key")
+}
+
+@Test
+func loginRejectsRelativeConfigHome() throws {
+    let home = try temporarySubmissionDirectory()
+
+    #expect(throws: MLXFastError.self) {
+        _ = try SubmissionSupport.storeCredentials(
+            apiKey: "test-key",
+            homeDirectory: home,
+            environment: ["XDG_CONFIG_HOME": "relative/config"]
+        )
+    }
+}
+
+@Test
+func loginLoadsLegacySwiftCredentialsJson() throws {
+    let home = try temporarySubmissionDirectory()
+    let legacyPath = try SubmissionSupport.legacyCredentialsPath(homeDirectory: home, environment: [:])
+    try FileManager.default.createDirectory(
+        at: legacyPath.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try """
+    {
+      "api_key": "legacy-key",
+      "stored_at": 22
+    }
+    """.write(to: legacyPath, atomically: true, encoding: .utf8)
+
+    let credentials = try SubmissionSupport.loadCredentials(homeDirectory: home, environment: [:])
+    #expect(credentials == StoredCredentials(apiKey: "legacy-key", storedAt: 22))
+}
+
+@Test
+func loginRejectsEmptyAPIKey() throws {
+    let home = try temporarySubmissionDirectory()
+
+    #expect(throws: MLXFastError.self) {
+        _ = try SubmissionSupport.storeCredentials(apiKey: "  \n", homeDirectory: home, environment: [:])
+    }
+}
+
 private func makeSubmissionWorkspace(editablePaths: [String]) throws -> URL {
     let root = try temporarySubmissionDirectory()
     let sources = root.appendingPathComponent("Sources", isDirectory: true)
