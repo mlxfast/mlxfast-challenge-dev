@@ -82,6 +82,13 @@ func correctnessReportEncodesStableFailureFields() throws {
         passed: true,
         checkedSteps: 256,
         caseCount: 1,
+        expertCacheHits: 4,
+        expertCacheMisses: 6,
+        expertCacheEvictions: 2,
+        expertBytesRead: 2048,
+        expertReadSeconds: 0.5,
+        expertPeakCachedTensors: 8,
+        expertHitRate: 0.4,
         firstFailingCase: nil,
         firstFailingStep: nil,
         expectedToken: nil,
@@ -100,7 +107,17 @@ func correctnessReportEncodesStableFailureFields() throws {
     #expect(raw.contains("\"actual_token\" : null"))
     #expect(raw.contains("\"checked_steps\" : 256"))
     #expect(raw.contains("\"case_count\" : 1"))
+    #expect(raw.contains("\"expert_cache_hits\" : 4"))
+    #expect(raw.contains("\"expert_cache_misses\" : 6"))
+    #expect(raw.contains("\"expert_cache_evictions\" : 2"))
+    #expect(raw.contains("\"expert_bytes_read\" : 2048"))
+    #expect(raw.contains("\"expert_read_seconds\" : 0.5"))
+    #expect(raw.contains("\"expert_peak_cached_tensors\" : 8"))
+    #expect(raw.contains("\"expert_hit_rate\" : 0.4"))
     #expect(raw.contains("\"golden_hash\" : \"abc123\""))
+    #expect(report.expertStreamingStats.cacheHits == 4)
+    #expect(report.expertStreamingStats.cacheMisses == 6)
+    #expect(report.expertStreamingStats.hitRate == 0.4)
 }
 
 @Test

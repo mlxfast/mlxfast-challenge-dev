@@ -22,6 +22,13 @@ func writeScorePayloadEmitsDarkbloomShape() throws {
     #expect(decoded.metrics.passedCorrectness == false)
     #expect(decoded.metrics.checkedSteps == 0)
     #expect(decoded.metrics.caseCount == 0)
+    #expect(decoded.metrics.expertCacheHits == 0)
+    #expect(decoded.metrics.expertCacheMisses == 0)
+    #expect(decoded.metrics.expertCacheEvictions == 0)
+    #expect(decoded.metrics.expertBytesRead == 0)
+    #expect(decoded.metrics.expertReadSeconds == 0)
+    #expect(decoded.metrics.expertPeakCachedTensors == 0)
+    #expect(decoded.metrics.expertHitRate == 0)
     #expect(decoded.metrics.firstFailingLayer == nil)
     #expect(decoded.metrics.firstFailingCase == nil)
     #expect(decoded.metrics.firstFailingStep == nil)
@@ -50,6 +57,13 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
                 numLayers: MLXFastConstants.numHiddenLayers,
                 checkedSteps: 13,
                 caseCount: 2,
+                expertCacheHits: 3,
+                expertCacheMisses: 5,
+                expertCacheEvictions: 2,
+                expertBytesRead: 1024,
+                expertReadSeconds: 0.25,
+                expertPeakCachedTensors: 4,
+                expertHitRate: 0.375,
                 firstFailingLayer: nil,
                 firstFailingCase: "case-b",
                 firstFailingStep: 12,
@@ -79,6 +93,13 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
     #expect(raw.contains("\"actual_token\" : 17"))
     #expect(raw.contains("\"checked_steps\" : 13"))
     #expect(raw.contains("\"case_count\" : 2"))
+    #expect(raw.contains("\"expert_cache_hits\" : 3"))
+    #expect(raw.contains("\"expert_cache_misses\" : 5"))
+    #expect(raw.contains("\"expert_cache_evictions\" : 2"))
+    #expect(raw.contains("\"expert_bytes_read\" : 1024"))
+    #expect(raw.contains("\"expert_read_seconds\" : 0.25"))
+    #expect(raw.contains("\"expert_peak_cached_tensors\" : 4"))
+    #expect(raw.contains("\"expert_hit_rate\" : 0.375"))
     #expect(raw.contains("\"golden_hash\" : \"golden-hash\""))
     #expect(decoded.metrics.firstFailingLayer == nil)
     #expect(decoded.metrics.firstFailingCase == "case-b")
@@ -87,6 +108,13 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
     #expect(decoded.metrics.actualToken == 17)
     #expect(decoded.metrics.checkedSteps == 13)
     #expect(decoded.metrics.caseCount == 2)
+    #expect(decoded.metrics.expertCacheHits == 3)
+    #expect(decoded.metrics.expertCacheMisses == 5)
+    #expect(decoded.metrics.expertCacheEvictions == 2)
+    #expect(decoded.metrics.expertBytesRead == 1024)
+    #expect(decoded.metrics.expertReadSeconds == 0.25)
+    #expect(decoded.metrics.expertPeakCachedTensors == 4)
+    #expect(decoded.metrics.expertHitRate == 0.375)
     #expect(decoded.metrics.goldenHash == "golden-hash")
 }
 

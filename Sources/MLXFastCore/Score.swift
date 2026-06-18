@@ -45,6 +45,13 @@ public struct ScoreMetrics: Codable, Equatable {
     public let numLayers: Int
     public let checkedSteps: Int
     public let caseCount: Int
+    public let expertCacheHits: UInt64
+    public let expertCacheMisses: UInt64
+    public let expertCacheEvictions: UInt64
+    public let expertBytesRead: UInt64
+    public let expertReadSeconds: Double
+    public let expertPeakCachedTensors: UInt64
+    public let expertHitRate: Double
     public let firstFailingLayer: Int?
     public let firstFailingCase: String?
     public let firstFailingStep: Int?
@@ -68,6 +75,13 @@ public struct ScoreMetrics: Codable, Equatable {
         case numLayers = "num_layers"
         case checkedSteps = "checked_steps"
         case caseCount = "case_count"
+        case expertCacheHits = "expert_cache_hits"
+        case expertCacheMisses = "expert_cache_misses"
+        case expertCacheEvictions = "expert_cache_evictions"
+        case expertBytesRead = "expert_bytes_read"
+        case expertReadSeconds = "expert_read_seconds"
+        case expertPeakCachedTensors = "expert_peak_cached_tensors"
+        case expertHitRate = "expert_hit_rate"
         case firstFailingLayer = "first_failing_layer"
         case firstFailingCase = "first_failing_case"
         case firstFailingStep = "first_failing_step"
@@ -92,6 +106,13 @@ public struct ScoreMetrics: Codable, Equatable {
         numLayers: Int,
         checkedSteps: Int,
         caseCount: Int,
+        expertCacheHits: UInt64 = 0,
+        expertCacheMisses: UInt64 = 0,
+        expertCacheEvictions: UInt64 = 0,
+        expertBytesRead: UInt64 = 0,
+        expertReadSeconds: Double = 0,
+        expertPeakCachedTensors: UInt64 = 0,
+        expertHitRate: Double = 0,
         firstFailingLayer: Int?,
         firstFailingCase: String?,
         firstFailingStep: Int?,
@@ -114,6 +135,13 @@ public struct ScoreMetrics: Codable, Equatable {
         self.numLayers = numLayers
         self.checkedSteps = checkedSteps
         self.caseCount = caseCount
+        self.expertCacheHits = expertCacheHits
+        self.expertCacheMisses = expertCacheMisses
+        self.expertCacheEvictions = expertCacheEvictions
+        self.expertBytesRead = expertBytesRead
+        self.expertReadSeconds = expertReadSeconds
+        self.expertPeakCachedTensors = expertPeakCachedTensors
+        self.expertHitRate = expertHitRate
         self.firstFailingLayer = firstFailingLayer
         self.firstFailingCase = firstFailingCase
         self.firstFailingStep = firstFailingStep
@@ -139,6 +167,13 @@ public struct ScoreMetrics: Codable, Equatable {
         try container.encode(numLayers, forKey: .numLayers)
         try container.encode(checkedSteps, forKey: .checkedSteps)
         try container.encode(caseCount, forKey: .caseCount)
+        try container.encode(expertCacheHits, forKey: .expertCacheHits)
+        try container.encode(expertCacheMisses, forKey: .expertCacheMisses)
+        try container.encode(expertCacheEvictions, forKey: .expertCacheEvictions)
+        try container.encode(expertBytesRead, forKey: .expertBytesRead)
+        try container.encode(expertReadSeconds, forKey: .expertReadSeconds)
+        try container.encode(expertPeakCachedTensors, forKey: .expertPeakCachedTensors)
+        try container.encode(expertHitRate, forKey: .expertHitRate)
         if let firstFailingLayer {
             try container.encode(firstFailingLayer, forKey: .firstFailingLayer)
         } else {

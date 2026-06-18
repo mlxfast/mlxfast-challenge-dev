@@ -1,4 +1,5 @@
 import Foundation
+import MLXFastCore
 
 public struct ExpertStreamingConfig: Equatable, Sendable {
     public enum Mode: String, Equatable, Sendable {
@@ -22,7 +23,8 @@ public struct ExpertStreamingConfig: Equatable, Sendable {
     }
 
     public static func fromEnvironment(
-        _ environment: [String: String] = ProcessInfo.processInfo.environment
+        _ environment: [String: String] = ProcessInfo.processInfo.environment,
+        recordsMetricsDefault: Bool = false
     ) -> ExpertStreamingConfig {
         let tensorCapacity =
             parsePositiveInt(environment["MLXFAST_EXPERT_CACHE_TENSORS"])
@@ -30,7 +32,7 @@ public struct ExpertStreamingConfig: Equatable, Sendable {
             ?? Self.defaultTensorCacheCapacity
         return ExpertStreamingConfig(
             tensorCacheCapacity: tensorCapacity,
-            recordsMetrics: parseBool(environment["MLXFAST_EXPERT_STREAM_METRICS"]) ?? false
+            recordsMetrics: parseBool(environment["MLXFAST_EXPERT_STREAM_METRICS"]) ?? recordsMetricsDefault
         )
     }
 
@@ -60,8 +62,10 @@ public final class ExpertStreamingMetrics: @unchecked Sendable {
     public struct Snapshot: Equatable, Sendable {
         public let cacheHits: UInt64
         public let cacheMisses: UInt64
+        public let cacheEvictions: UInt64
         public let bytesRead: UInt64
         public let readNanoseconds: UInt64
+        public let peakCachedTensors: UInt64
 
         public var totalLookups: UInt64 {
             cacheHits + cacheMisses
@@ -70,13 +74,26 @@ public final class ExpertStreamingMetrics: @unchecked Sendable {
         public var hitRate: Double {
             totalLookups == 0 ? 0 : Double(cacheHits) / Double(totalLookups)
         }
+
+        public var stats: ExpertStreamingStats {
+            ExpertStreamingStats(
+                cacheHits: cacheHits,
+                cacheMisses: cacheMisses,
+                cacheEvictions: cacheEvictions,
+                bytesRead: bytesRead,
+                readSeconds: Double(readNanoseconds) / 1_000_000_000.0,
+                peakCachedTensors: peakCachedTensors
+            )
+        }
     }
 
     private let lock = NSLock()
     private var cacheHits: UInt64 = 0
     private var cacheMisses: UInt64 = 0
+    private var cacheEvictions: UInt64 = 0
     private var bytesRead: UInt64 = 0
     private var readNanoseconds: UInt64 = 0
+    private var peakCachedTensors: UInt64 = 0
 
     public init() {}
 
@@ -94,6 +111,18 @@ public final class ExpertStreamingMetrics: @unchecked Sendable {
         lock.unlock()
     }
 
+    public func recordCacheEviction() {
+        lock.lock()
+        cacheEvictions += 1
+        lock.unlock()
+    }
+
+    public func recordCacheOccupancy(_ count: Int) {
+        lock.lock()
+        peakCachedTensors = max(peakCachedTensors, UInt64(max(0, count)))
+        lock.unlock()
+    }
+
     public func snapshot() -> Snapshot {
         lock.lock()
         defer {
@@ -102,8 +131,10 @@ public final class ExpertStreamingMetrics: @unchecked Sendable {
         return Snapshot(
             cacheHits: cacheHits,
             cacheMisses: cacheMisses,
+            cacheEvictions: cacheEvictions,
             bytesRead: bytesRead,
-            readNanoseconds: readNanoseconds
+            readNanoseconds: readNanoseconds,
+            peakCachedTensors: peakCachedTensors
         )
     }
 }

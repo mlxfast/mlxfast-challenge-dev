@@ -17,6 +17,13 @@ public struct CorrectnessReport: Codable, Equatable {
     public let passed: Bool
     public let checkedSteps: Int
     public let caseCount: Int
+    public let expertCacheHits: UInt64
+    public let expertCacheMisses: UInt64
+    public let expertCacheEvictions: UInt64
+    public let expertBytesRead: UInt64
+    public let expertReadSeconds: Double
+    public let expertPeakCachedTensors: UInt64
+    public let expertHitRate: Double
     public let firstFailingCase: String?
     public let firstFailingStep: Int?
     public let expectedToken: Int?
@@ -28,6 +35,13 @@ public struct CorrectnessReport: Codable, Equatable {
         case passed
         case checkedSteps = "checked_steps"
         case caseCount = "case_count"
+        case expertCacheHits = "expert_cache_hits"
+        case expertCacheMisses = "expert_cache_misses"
+        case expertCacheEvictions = "expert_cache_evictions"
+        case expertBytesRead = "expert_bytes_read"
+        case expertReadSeconds = "expert_read_seconds"
+        case expertPeakCachedTensors = "expert_peak_cached_tensors"
+        case expertHitRate = "expert_hit_rate"
         case firstFailingCase = "first_failing_case"
         case firstFailingStep = "first_failing_step"
         case expectedToken = "expected_token"
@@ -36,11 +50,54 @@ public struct CorrectnessReport: Codable, Equatable {
         case error
     }
 
+    public init(
+        passed: Bool,
+        checkedSteps: Int,
+        caseCount: Int,
+        expertCacheHits: UInt64 = 0,
+        expertCacheMisses: UInt64 = 0,
+        expertCacheEvictions: UInt64 = 0,
+        expertBytesRead: UInt64 = 0,
+        expertReadSeconds: Double = 0,
+        expertPeakCachedTensors: UInt64 = 0,
+        expertHitRate: Double = 0,
+        firstFailingCase: String?,
+        firstFailingStep: Int?,
+        expectedToken: Int?,
+        actualToken: Int?,
+        goldenHash: String,
+        error: String
+    ) {
+        self.passed = passed
+        self.checkedSteps = checkedSteps
+        self.caseCount = caseCount
+        self.expertCacheHits = expertCacheHits
+        self.expertCacheMisses = expertCacheMisses
+        self.expertCacheEvictions = expertCacheEvictions
+        self.expertBytesRead = expertBytesRead
+        self.expertReadSeconds = expertReadSeconds
+        self.expertPeakCachedTensors = expertPeakCachedTensors
+        self.expertHitRate = expertHitRate
+        self.firstFailingCase = firstFailingCase
+        self.firstFailingStep = firstFailingStep
+        self.expectedToken = expectedToken
+        self.actualToken = actualToken
+        self.goldenHash = goldenHash
+        self.error = error
+    }
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(passed, forKey: .passed)
         try container.encode(checkedSteps, forKey: .checkedSteps)
         try container.encode(caseCount, forKey: .caseCount)
+        try container.encode(expertCacheHits, forKey: .expertCacheHits)
+        try container.encode(expertCacheMisses, forKey: .expertCacheMisses)
+        try container.encode(expertCacheEvictions, forKey: .expertCacheEvictions)
+        try container.encode(expertBytesRead, forKey: .expertBytesRead)
+        try container.encode(expertReadSeconds, forKey: .expertReadSeconds)
+        try container.encode(expertPeakCachedTensors, forKey: .expertPeakCachedTensors)
+        try container.encode(expertHitRate, forKey: .expertHitRate)
         if let firstFailingCase {
             try container.encode(firstFailingCase, forKey: .firstFailingCase)
         } else {
@@ -64,6 +121,17 @@ public struct CorrectnessReport: Codable, Equatable {
         try container.encode(goldenHash, forKey: .goldenHash)
         try container.encode(error, forKey: .error)
     }
+
+    public var expertStreamingStats: ExpertStreamingStats {
+        ExpertStreamingStats(
+            cacheHits: expertCacheHits,
+            cacheMisses: expertCacheMisses,
+            cacheEvictions: expertCacheEvictions,
+            bytesRead: expertBytesRead,
+            readSeconds: expertReadSeconds,
+            peakCachedTensors: expertPeakCachedTensors
+        )
+    }
 }
 
 public struct BenchmarkOptions: Equatable {
@@ -79,12 +147,17 @@ public struct BenchmarkOptions: Equatable {
 public enum DeepSeekRuntime {
     public static func runCorrectness(_ options: CorrectnessOptions) throws -> CorrectnessReport {
         var loadedGolden: GoldenFixture?
+        var loader: DeepSeekWeightLoader?
         do {
             let golden = try loadGoldenFixture(from: options.goldenPath)
             loadedGolden = golden
             let config = try DeepSeekConfig.load(from: options.weightsPath)
-            let loader = try DeepSeekWeightLoader(weightsPath: options.weightsPath)
-            let weightCache = DeepSeekRuntimeWeightCache(loader: loader, config: config)
+            let runtimeLoader = try DeepSeekWeightLoader(
+                weightsPath: options.weightsPath,
+                expertStreamingConfig: ExpertStreamingConfig.fromEnvironment(recordsMetricsDefault: true)
+            )
+            loader = runtimeLoader
+            let weightCache = DeepSeekRuntimeWeightCache(loader: runtimeLoader, config: config)
             return runCorrectness(
                 cases: golden.cases,
                 weightCache: weightCache,
@@ -95,6 +168,7 @@ public enum DeepSeekRuntime {
                 checkedSteps: 0,
                 caseCount: loadedGolden?.cases.count ?? 0,
                 goldenHash: loadedGolden?.sha256 ?? "",
+                expertStats: expertStats(from: loader),
                 error: "\(error)"
             )
         }
@@ -102,6 +176,7 @@ public enum DeepSeekRuntime {
 
     public static func benchmark(_ options: BenchmarkOptions) -> ScorePayload {
         var correctnessReport: CorrectnessReport?
+        var benchmarkLoader: DeepSeekWeightLoader?
         do {
             _ = try BenchmarkPreflight.check(
                 weightsPath: options.weightsPath,
@@ -109,7 +184,10 @@ public enum DeepSeekRuntime {
             )
             let golden = try loadGoldenFixture(from: options.goldenPath)
             let config = try DeepSeekConfig.load(from: options.weightsPath)
-            let correctnessLoader = try DeepSeekWeightLoader(weightsPath: options.weightsPath)
+            let correctnessLoader = try DeepSeekWeightLoader(
+                weightsPath: options.weightsPath,
+                expertStreamingConfig: ExpertStreamingConfig.fromEnvironment(recordsMetricsDefault: true)
+            )
             let correctnessCache = DeepSeekRuntimeWeightCache(loader: correctnessLoader, config: config)
             let correctness = runCorrectness(
                 cases: golden.cases,
@@ -125,11 +203,12 @@ public enum DeepSeekRuntime {
                 )
             }
 
-            let benchmarkLoader = try DeepSeekWeightLoader(
+            let runtimeBenchmarkLoader = try DeepSeekWeightLoader(
                 weightsPath: options.weightsPath,
-                expertStreamingConfig: ExpertStreamingConfig(recordsMetrics: true)
+                expertStreamingConfig: ExpertStreamingConfig.fromEnvironment(recordsMetricsDefault: true)
             )
-            let benchmarkCache = DeepSeekRuntimeWeightCache(loader: benchmarkLoader, config: config)
+            benchmarkLoader = runtimeBenchmarkLoader
+            let benchmarkCache = DeepSeekRuntimeWeightCache(loader: runtimeBenchmarkLoader, config: config)
             let promptPlan = try BenchmarkPrompt.plan(from: golden.cases)
             let idleSamples = try MactopSession.measureIdleSamples()
             guard !idleSamples.isEmpty else {
@@ -152,12 +231,14 @@ public enum DeepSeekRuntime {
                 * decode.bandwidthGBPerToken
                 * decode.secondsPerToken
                 * prefillSecondsPerToken
+            let expertStats = expertStats(from: runtimeBenchmarkLoader)
 
             guard score.isFinite, score >= 0 else {
                 return failedScore(
                     error: "computed score was not finite",
                     correctness: correctnessReport,
-                    passedCorrectness: true
+                    passedCorrectness: true,
+                    expertStats: expertStats
                 )
             }
 
@@ -173,6 +254,13 @@ public enum DeepSeekRuntime {
                     numLayers: config.numHiddenLayers,
                     checkedSteps: correctness.checkedSteps,
                     caseCount: correctness.caseCount,
+                    expertCacheHits: expertStats.cacheHits,
+                    expertCacheMisses: expertStats.cacheMisses,
+                    expertCacheEvictions: expertStats.cacheEvictions,
+                    expertBytesRead: expertStats.bytesRead,
+                    expertReadSeconds: expertStats.readSeconds,
+                    expertPeakCachedTensors: expertStats.peakCachedTensors,
+                    expertHitRate: expertStats.hitRate,
                     firstFailingLayer: nil,
                     firstFailingCase: nil,
                     firstFailingStep: nil,
@@ -192,7 +280,8 @@ public enum DeepSeekRuntime {
             return failedScore(
                 error: "\(error)",
                 correctness: correctnessReport,
-                passedCorrectness: correctnessReport?.passed == true
+                passedCorrectness: correctnessReport?.passed == true,
+                expertStats: expertStats(from: benchmarkLoader)
             )
         }
     }
@@ -209,10 +298,18 @@ public enum DeepSeekRuntime {
                 currentCase = testCase
                 let comparison = try compareGreedyCached(testCase: testCase, weightCache: weightCache)
                 if !comparison.passed {
+                    let expertStats = expertStats(from: weightCache)
                     return CorrectnessReport(
                         passed: false,
                         checkedSteps: checkedSteps + comparison.checkedSteps,
                         caseCount: cases.count,
+                        expertCacheHits: expertStats.cacheHits,
+                        expertCacheMisses: expertStats.cacheMisses,
+                        expertCacheEvictions: expertStats.cacheEvictions,
+                        expertBytesRead: expertStats.bytesRead,
+                        expertReadSeconds: expertStats.readSeconds,
+                        expertPeakCachedTensors: expertStats.peakCachedTensors,
+                        expertHitRate: expertStats.hitRate,
                         firstFailingCase: testCase.name,
                         firstFailingStep: comparison.firstFailingStep,
                         expectedToken: comparison.expectedToken,
@@ -229,14 +326,23 @@ public enum DeepSeekRuntime {
                 caseCount: cases.count,
                 firstFailingCase: currentCase?.name,
                 goldenHash: goldenHash,
+                expertStats: expertStats(from: weightCache),
                 error: "\(error)"
             )
         }
 
+        let expertStats = expertStats(from: weightCache)
         return CorrectnessReport(
             passed: true,
             checkedSteps: checkedSteps,
             caseCount: cases.count,
+            expertCacheHits: expertStats.cacheHits,
+            expertCacheMisses: expertStats.cacheMisses,
+            expertCacheEvictions: expertStats.cacheEvictions,
+            expertBytesRead: expertStats.bytesRead,
+            expertReadSeconds: expertStats.readSeconds,
+            expertPeakCachedTensors: expertStats.peakCachedTensors,
+            expertHitRate: expertStats.hitRate,
             firstFailingCase: nil,
             firstFailingStep: nil,
             expectedToken: nil,
@@ -354,12 +460,22 @@ public enum DeepSeekRuntime {
         }
     }
 
+    private static func expertStats(from weightCache: DeepSeekRuntimeWeightCache) -> ExpertStreamingStats {
+        expertStats(from: weightCache.loader)
+    }
+
+    private static func expertStats(from loader: DeepSeekWeightLoader?) -> ExpertStreamingStats {
+        loader?.expertStreamingMetrics?.snapshot().stats ?? .zero
+    }
+
     private static func failedScore(
         error: String,
         correctness: CorrectnessReport?,
-        passedCorrectness: Bool
+        passedCorrectness: Bool,
+        expertStats explicitExpertStats: ExpertStreamingStats? = nil
     ) -> ScorePayload {
-        ScorePayload(
+        let expertStats = explicitExpertStats ?? correctness?.expertStreamingStats ?? .zero
+        return ScorePayload(
             score: nil,
             passed: false,
             metrics: ScoreMetrics(
@@ -371,6 +487,13 @@ public enum DeepSeekRuntime {
                 numLayers: MLXFastConstants.numHiddenLayers,
                 checkedSteps: correctness?.checkedSteps ?? 0,
                 caseCount: correctness?.caseCount ?? 0,
+                expertCacheHits: expertStats.cacheHits,
+                expertCacheMisses: expertStats.cacheMisses,
+                expertCacheEvictions: expertStats.cacheEvictions,
+                expertBytesRead: expertStats.bytesRead,
+                expertReadSeconds: expertStats.readSeconds,
+                expertPeakCachedTensors: expertStats.peakCachedTensors,
+                expertHitRate: expertStats.hitRate,
                 firstFailingLayer: nil,
                 firstFailingCase: correctness?.firstFailingCase,
                 firstFailingStep: correctness?.firstFailingStep,
@@ -542,12 +665,20 @@ public enum DeepSeekRuntime {
         caseCount: Int = 0,
         firstFailingCase: String? = nil,
         goldenHash: String = "",
+        expertStats: ExpertStreamingStats = .zero,
         error: String
     ) -> CorrectnessReport {
         CorrectnessReport(
             passed: false,
             checkedSteps: checkedSteps,
             caseCount: caseCount,
+            expertCacheHits: expertStats.cacheHits,
+            expertCacheMisses: expertStats.cacheMisses,
+            expertCacheEvictions: expertStats.cacheEvictions,
+            expertBytesRead: expertStats.bytesRead,
+            expertReadSeconds: expertStats.readSeconds,
+            expertPeakCachedTensors: expertStats.peakCachedTensors,
+            expertHitRate: expertStats.hitRate,
             firstFailingCase: firstFailingCase,
             firstFailingStep: nil,
             expectedToken: nil,

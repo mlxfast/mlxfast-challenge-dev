@@ -159,20 +159,13 @@ public final class ExpertSlotBank {
     }
 
     public func tensorBytes(for record: ExpertTensorRecord) throws -> Data {
-        if let cached = cache[record.name] {
-            touch(record.name)
-            metrics?.recordCacheHit()
-            return cached
-        }
-
-        let start = DispatchTime.now().uptimeNanoseconds
-        let data = try readBytes(for: record)
-        metrics?.recordCacheMiss(
-            bytes: record.byteLength,
-            nanoseconds: DispatchTime.now().uptimeNanoseconds - start
+        try cachedBytes(
+            cacheKey: record.name,
+            name: record.name,
+            shard: record.shard,
+            byteOffset: record.byteOffset,
+            byteLength: record.byteLength
         )
-        insert(data, for: record.name)
-        return data
     }
 
     public func materializedTensor(named name: String) throws -> MaterializedTensor {
@@ -205,8 +198,10 @@ public final class ExpertSlotBank {
 
         let sliceByteLength = record.byteLength / firstDimension
         let sliceOffset = record.byteOffset + firstAxisIndex * sliceByteLength
-        let bytes = try readBytes(
-            name: "\(record.name)[\(firstAxisIndex)]",
+        let sliceName = "\(record.name)[\(firstAxisIndex)]"
+        let bytes = try cachedBytes(
+            cacheKey: sliceName,
+            name: sliceName,
             shard: record.shard,
             byteOffset: sliceOffset,
             byteLength: sliceByteLength
@@ -250,7 +245,9 @@ public final class ExpertSlotBank {
         while lru.count > capacity {
             let evicted = lru.removeFirst()
             cache.removeValue(forKey: evicted)
+            metrics?.recordCacheEviction()
         }
+        metrics?.recordCacheOccupancy(lru.count)
     }
 
     private func touch(_ name: String) {
@@ -258,13 +255,32 @@ public final class ExpertSlotBank {
         lru.append(name)
     }
 
-    private func readBytes(for record: ExpertTensorRecord) throws -> Data {
-        try readBytes(
-            name: record.name,
-            shard: record.shard,
-            byteOffset: record.byteOffset,
-            byteLength: record.byteLength
+    private func cachedBytes(
+        cacheKey: String,
+        name: String,
+        shard: String,
+        byteOffset: Int,
+        byteLength: Int
+    ) throws -> Data {
+        if let cached = cache[cacheKey] {
+            touch(cacheKey)
+            metrics?.recordCacheHit()
+            return cached
+        }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let data = try readBytes(
+            name: name,
+            shard: shard,
+            byteOffset: byteOffset,
+            byteLength: byteLength
         )
+        metrics?.recordCacheMiss(
+            bytes: byteLength,
+            nanoseconds: DispatchTime.now().uptimeNanoseconds - start
+        )
+        insert(data, for: cacheKey)
+        return data
     }
 
     private func readBytes(

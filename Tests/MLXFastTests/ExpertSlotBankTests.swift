@@ -250,10 +250,59 @@ func expertSlotBankRecordsStreamingMetrics() throws {
     let snapshot = metrics.snapshot()
     #expect(snapshot.cacheMisses == 1)
     #expect(snapshot.cacheHits == 1)
+    #expect(snapshot.cacheEvictions == 0)
     #expect(snapshot.bytesRead == 2)
     #expect(snapshot.readNanoseconds > 0)
+    #expect(snapshot.peakCachedTensors == 1)
     #expect(snapshot.totalLookups == 2)
     #expect(snapshot.hitRate == 0.5)
+    #expect(snapshot.stats.cacheHits == 1)
+    #expect(snapshot.stats.cacheMisses == 1)
+    #expect(snapshot.stats.bytesRead == 2)
+}
+
+@Test
+func expertSlotBankCachesFirstAxisSlicesAndRecordsEvictions() throws {
+    let root = try temporaryDirectory()
+    let reference = root.appendingPathComponent("reference", isDirectory: true)
+    let experts = root.appendingPathComponent("weights/experts", isDirectory: true)
+    try FileManager.default.createDirectory(at: reference, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: experts, withIntermediateDirectories: true)
+
+    let shard = reference.appendingPathComponent("model-00001.safetensors")
+    try Data([10, 11, 12, 13, 14, 15]).write(to: shard)
+
+    let tensorName = "model.layers.0.ffn.switch_mlp.gate_proj.weight"
+    try manifestJSON(
+        referencePath: reference.path,
+        records: [
+            record(name: tensorName, shard: shard.lastPathComponent, offset: 0, length: 6, shape: [3, 2]),
+        ]
+    ).write(
+        to: experts.appendingPathComponent("manifest.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let metrics = ExpertStreamingMetrics()
+    let bank = try ExpertSlotBank(
+        manifestPath: experts.appendingPathComponent("manifest.json").path,
+        capacity: 1,
+        metrics: metrics
+    )
+
+    #expect(try bank.materializedTensor(named: tensorName, firstAxisIndex: 1).uint8Values() == [12, 13])
+    #expect(try bank.materializedTensor(named: tensorName, firstAxisIndex: 1).uint8Values() == [12, 13])
+    #expect(bank.cachedTensorNames == ["\(tensorName)[1]"])
+    #expect(try bank.materializedTensor(named: tensorName, firstAxisIndex: 2).uint8Values() == [14, 15])
+    #expect(bank.cachedTensorNames == ["\(tensorName)[2]"])
+
+    let snapshot = metrics.snapshot()
+    #expect(snapshot.cacheMisses == 2)
+    #expect(snapshot.cacheHits == 1)
+    #expect(snapshot.cacheEvictions == 1)
+    #expect(snapshot.bytesRead == 4)
+    #expect(snapshot.peakCachedTensors == 1)
 }
 
 @Test
@@ -266,6 +315,9 @@ func expertStreamingConfigParsesEnvironment() {
     #expect(config.mode == .directNVMe)
     #expect(config.tensorCacheCapacity == 21)
     #expect(config.recordsMetrics)
+
+    let defaultMetrics = ExpertStreamingConfig.fromEnvironment([:], recordsMetricsDefault: true)
+    #expect(defaultMetrics.recordsMetrics)
 }
 
 private func manifestJSON(referencePath: String, records: [String]) -> String {
