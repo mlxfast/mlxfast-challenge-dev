@@ -7,11 +7,18 @@ public struct TransformVerificationOptions: Equatable {
     public let referencePath: String
     public let weightsPath: String
     public let temporaryParentPath: String?
+    public let maxByteCount: Int?
 
-    public init(referencePath: String, weightsPath: String, temporaryParentPath: String? = nil) {
+    public init(
+        referencePath: String,
+        weightsPath: String,
+        temporaryParentPath: String? = nil,
+        maxByteCount: Int? = MLXFastConstants.defaultMaxTransformedWeightsBytes
+    ) {
         self.referencePath = referencePath
         self.weightsPath = weightsPath
         self.temporaryParentPath = temporaryParentPath
+        self.maxByteCount = maxByteCount
     }
 }
 
@@ -21,7 +28,9 @@ public struct TransformVerificationReport: Codable, Equatable {
     public let regeneratedPath: String
     public let fileCount: Int
     public let byteCount: Int
+    public let maxByteCount: Int?
     public let sha256: String
+    public let deterministic: Bool
 
     public init(
         referencePath: String,
@@ -29,14 +38,18 @@ public struct TransformVerificationReport: Codable, Equatable {
         regeneratedPath: String,
         fileCount: Int,
         byteCount: Int,
-        sha256: String
+        maxByteCount: Int?,
+        sha256: String,
+        deterministic: Bool
     ) {
         self.referencePath = referencePath
         self.weightsPath = weightsPath
         self.regeneratedPath = regeneratedPath
         self.fileCount = fileCount
         self.byteCount = byteCount
+        self.maxByteCount = maxByteCount
         self.sha256 = sha256
+        self.deterministic = deterministic
     }
 }
 
@@ -66,7 +79,8 @@ public enum TransformVerifier {
         )
         let comparison = try compareDirectories(
             expected: regeneratedDirectory,
-            actual: weightsDirectory
+            actual: weightsDirectory,
+            maxByteCount: options.maxByteCount
         )
 
         return TransformVerificationReport(
@@ -75,7 +89,9 @@ public enum TransformVerifier {
             regeneratedPath: regeneratedDirectory.path,
             fileCount: comparison.fileCount,
             byteCount: comparison.byteCount,
-            sha256: comparison.sha256
+            maxByteCount: options.maxByteCount,
+            sha256: comparison.sha256,
+            deterministic: true
         )
     }
 
@@ -99,7 +115,11 @@ public enum TransformVerifier {
         let sha256: String
     }
 
-    private static func compareDirectories(expected: URL, actual: URL) throws -> Comparison {
+    private static func compareDirectories(
+        expected: URL,
+        actual: URL,
+        maxByteCount: Int?
+    ) throws -> Comparison {
         let expectedFiles = try relativeRegularFiles(in: expected)
         let actualFiles = try relativeRegularFiles(in: actual)
         let expectedSet = Set(expectedFiles.keys)
@@ -135,6 +155,11 @@ public enum TransformVerifier {
             treeHasher.update(data: Data(digest))
             treeHasher.update(data: Data([0]))
             byteCount += expectedSize
+            if let maxByteCount, byteCount > maxByteCount {
+                throw MLXFastError.invalidInput(
+                    "transform output is \(byteCount) bytes, above limit \(maxByteCount)"
+                )
+            }
         }
 
         return Comparison(

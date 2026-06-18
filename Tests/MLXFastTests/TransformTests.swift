@@ -84,7 +84,7 @@ func transformCopiesDenseTensorsAndWritesExpertManifest() throws {
 }
 
 @Test
-func transformVerifierAcceptsByteEqualOutputAndIgnoresLocalCacheMarkers() throws {
+func transformVerifierAcceptsFreshSubmittedTransformOutputAndIgnoresLocalCacheMarkers() throws {
     let fixture = try writeTransformFixture()
     _ = try SwiftTransform.run(
         TransformOptions(referencePath: fixture.reference.path, outputPath: fixture.output.path)
@@ -111,11 +111,13 @@ func transformVerifierAcceptsByteEqualOutputAndIgnoresLocalCacheMarkers() throws
     #expect(report.weightsPath == fixture.output.path)
     #expect(report.fileCount > 0)
     #expect(report.byteCount > 0)
+    #expect(report.maxByteCount == MLXFastConstants.defaultMaxTransformedWeightsBytes)
     #expect(report.sha256.count == 64)
+    #expect(report.deterministic)
 }
 
 @Test
-func transformVerifierRejectsByteMismatch() throws {
+func transformVerifierRejectsOutputThatDiffersFromFreshTransformRun() throws {
     let fixture = try writeTransformFixture()
     _ = try SwiftTransform.run(
         TransformOptions(referencePath: fixture.reference.path, outputPath: fixture.output.path)
@@ -138,7 +140,7 @@ func transformVerifierRejectsByteMismatch() throws {
 }
 
 @Test
-func transformVerifierRejectsExtraGeneratedFile() throws {
+func transformVerifierRejectsStaleExtraGeneratedFile() throws {
     let fixture = try writeTransformFixture()
     _ = try SwiftTransform.run(
         TransformOptions(referencePath: fixture.reference.path, outputPath: fixture.output.path)
@@ -155,6 +157,25 @@ func transformVerifierRejectsExtraGeneratedFile() throws {
                 referencePath: fixture.reference.path,
                 weightsPath: fixture.output.path,
                 temporaryParentPath: fixture.root.path
+            )
+        )
+    }
+}
+
+@Test
+func transformVerifierRejectsOutputAboveConfiguredByteLimit() throws {
+    let fixture = try writeTransformFixture()
+    _ = try SwiftTransform.run(
+        TransformOptions(referencePath: fixture.reference.path, outputPath: fixture.output.path)
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try TransformVerifier.verify(
+            TransformVerificationOptions(
+                referencePath: fixture.reference.path,
+                weightsPath: fixture.output.path,
+                temporaryParentPath: fixture.root.path,
+                maxByteCount: 1
             )
         )
     }

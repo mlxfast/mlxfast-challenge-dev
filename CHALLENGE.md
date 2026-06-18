@@ -51,6 +51,14 @@ weights/
   experts/manifest.json
 ```
 
+The baseline `weights/` tree is a compact runtime artifact set, not a second
+full copy of the checkpoint. It stores dense/shared tensors plus metadata, while
+the baseline runtime streams routed expert tensors from the frozen reference
+checkpoint. Submissions may replace this layout by changing both
+`Sources/MLXFastTransform/` and `Sources/MLXFastDeepSeek/`; correctness and
+benchmark results are the authority, not byte equality with the baseline
+layout.
+
 Correctness cases and the timed benchmark token oracle are supplied by the
 benchmark operator and are intentionally not committed to the public repo:
 
@@ -74,6 +82,12 @@ The active editable surface is Swift-only and is defined by `benchmark.json`:
 scripts, tests, `benchmark.json`, generated `weights/`, reference checkpoints,
 golden fixtures, and local scores are harness/operator files, not submission
 surface. `mlxfast-swift submit` packages only `editablePaths`.
+
+`mlxfast-swift verify-transform` is an organizer/debug check for deterministic
+transform output. It re-runs the submitted transform and compares the generated
+`weights/` tree against that fresh run. It is not a baseline-layout requirement.
+The default transformed-output cap is 200 GiB; override it with
+`MLXFAST_MAX_WEIGHTS_BYTES` or `--max-bytes` when running the verifier.
 
 There is no Python harness path.
 

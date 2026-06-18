@@ -86,7 +86,7 @@ private enum MLXFastCLI {
     }
 
     private static func runVerifyTransform(_ options: ParsedOptions) throws {
-        try options.validate(valueOptions: ["--reference", "--weights", "--tmp-parent"])
+        try options.validate(valueOptions: ["--reference", "--weights", "--tmp-parent", "--max-bytes"])
         let referencePath = options.value(
             for: "--reference",
             default: environmentValue(
@@ -102,11 +102,20 @@ private enum MLXFastCLI {
             )
         )
         let temporaryParentPath = options.value(for: "--tmp-parent", default: "")
+        let maxBytesRaw = options.value(
+            for: "--max-bytes",
+            default: environmentValue(
+                "MLXFAST_MAX_WEIGHTS_BYTES",
+                fallback: "\(MLXFastConstants.defaultMaxTransformedWeightsBytes)"
+            )
+        )
+        let maxByteCount = try parseMaxByteCount(maxBytesRaw)
         let report = try TransformVerifier.verify(
             TransformVerificationOptions(
                 referencePath: referencePath,
                 weightsPath: weightsPath,
-                temporaryParentPath: temporaryParentPath.isEmpty ? nil : temporaryParentPath
+                temporaryParentPath: temporaryParentPath.isEmpty ? nil : temporaryParentPath,
+                maxByteCount: maxByteCount
             )
         )
 
@@ -308,7 +317,7 @@ private enum MLXFastCLI {
             """
             Usage:
               mlxfast-swift transform [--reference PATH] [--output PATH]
-              mlxfast-swift verify-transform [--reference PATH] [--weights PATH] [--tmp-parent PATH]
+              mlxfast-swift verify-transform [--reference PATH] [--weights PATH] [--tmp-parent PATH] [--max-bytes N]
               mlxfast-swift correctness [--weights PATH] [--golden PATH]
               mlxfast-swift preflight [--weights PATH] [--golden PATH]
               mlxfast-swift benchmark [--weights PATH] [--golden PATH] [--score-path PATH]
@@ -326,6 +335,21 @@ private enum MLXFastCLI {
     private static func environmentValue(_ name: String, fallback: String) -> String {
         let value = ProcessInfo.processInfo.environment[name] ?? ""
         return value.isEmpty ? fallback : value
+    }
+
+    private static func parseMaxByteCount(_ raw: String) throws -> Int? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return MLXFastConstants.defaultMaxTransformedWeightsBytes
+        }
+        let lowercased = trimmed.lowercased()
+        if lowercased == "0" || lowercased == "none" || lowercased == "unlimited" {
+            return nil
+        }
+        guard let value = Int(trimmed), value > 0 else {
+            throw MLXFastError.invalidInput("--max-bytes must be a positive byte count, 0, none, or unlimited")
+        }
+        return value
     }
 
     private static func parseTokenList(_ raw: String) throws -> [Int] {

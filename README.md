@@ -54,6 +54,10 @@ only the routed tensors needed for the current forward pass are materialized.
 That baseline is functional but naive. Expert reads block the forward pass,
 there is no prefetching, no cross-layer reuse, and the weights are stored in
 their original 4-bit form. Every one of these is an optimisation target.
+The baseline transform output is not the required layout: submissions may
+change both the transform and runtime to repack experts, add metadata, or use a
+different streaming strategy, as long as the generated runnable artifacts pass
+the hidden correctness and benchmark checks.
 
 ## The modifiable surface
 
@@ -99,16 +103,20 @@ Sources/
   MLXFastDeepSeek/           DeepSeek V4 Flash Swift runtime
 weights/                     transformed weights (harness loads from here)
   experts/
-    manifest.json            byte ranges for streamed expert tensors
-reference_weights/           original 4-bit checkpoint (frozen, read-only)
+    manifest.json            baseline byte ranges for streamed expert tensors
+reference_weights/           original 4-bit checkpoint (frozen, read-only;
+                              baseline runtime also uses it as expert backing)
 correctness_golden.json      hidden correctness cases and benchmark token oracle
 score.json                   written after each benchmark run
 ```
 
 For stricter organizer-side provenance, set `MLXFAST_VERIFY_TRANSFORM=1` when
-running `benchmark.sh`. That re-runs the Swift transform into a clean temporary
-directory and fails unless the submitted `weights/` tree is byte-equal to the
-clean transform output.
+running `benchmark.sh`. That re-runs the submitted Swift transform into a clean
+temporary directory and fails unless `weights/` is byte-equal to that fresh run.
+This checks determinism and stale files; it does not require the baseline
+`weights/` layout. The default transformed-output cap is 200 GiB and can be
+changed with `MLXFAST_MAX_WEIGHTS_BYTES` or
+`mlxfast-swift verify-transform --max-bytes N`.
 
 Organizer golden files can be generated from a private prompt manifest:
 

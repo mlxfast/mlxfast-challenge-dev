@@ -121,7 +121,7 @@ if [[ "${MLXFAST_VERIFY_TRANSFORM:-0}" == "1" ]]; then
     echo "benchmark.sh: MLXFAST_VERIFY_TRANSFORM=1 requires reference weights at ${REFERENCE_PATH}" >&2
     exit 1
   fi
-  echo "benchmark.sh: verifying weights are byte-equal to a clean Swift transform"
+  echo "benchmark.sh: verifying weights match a fresh run of the submitted Swift transform"
   "${SWIFT_BIN}" verify-transform --reference "${REFERENCE_PATH}" --weights "${WEIGHTS_PATH}"
 fi
 
