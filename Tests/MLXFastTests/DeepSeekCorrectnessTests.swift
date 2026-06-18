@@ -35,6 +35,17 @@ func deepSeekCorrectnessComparesExpectedTokenSequences() {
     #expect(short.firstFailingStep == 1)
     #expect(short.expectedToken == 5)
     #expect(short.actualToken == nil)
+
+    let expectedShort = DeepSeekCorrectness.compareTokens(
+        expected: [4],
+        actual: [4, 5],
+        steps: 2
+    )
+    #expect(!expectedShort.passed)
+    #expect(expectedShort.checkedSteps == 2)
+    #expect(expectedShort.firstFailingStep == 1)
+    #expect(expectedShort.expectedToken == nil)
+    #expect(expectedShort.actualToken == 5)
 }
 
 @Test

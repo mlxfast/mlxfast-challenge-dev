@@ -20,8 +20,14 @@ func writeScorePayloadEmitsDarkbloomShape() throws {
     #expect(decoded.score == nil)
     #expect(decoded.passed == false)
     #expect(decoded.metrics.passedCorrectness == false)
+    #expect(decoded.metrics.checkedSteps == 0)
+    #expect(decoded.metrics.caseCount == 0)
     #expect(decoded.metrics.firstFailingLayer == nil)
+    #expect(decoded.metrics.firstFailingCase == nil)
     #expect(decoded.metrics.firstFailingStep == nil)
+    #expect(decoded.metrics.expectedToken == nil)
+    #expect(decoded.metrics.actualToken == nil)
+    #expect(decoded.metrics.goldenHash == "")
     #expect(decoded.metrics.error == "runtime unavailable")
     #expect(decoded.metrics.runtime == "swift")
 }
@@ -42,9 +48,15 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
                 prefillSecondsPerToken: 0,
                 passedCorrectness: false,
                 numLayers: MLXFastConstants.numHiddenLayers,
+                checkedSteps: 13,
+                caseCount: 2,
                 firstFailingLayer: nil,
+                firstFailingCase: "case-b",
                 firstFailingStep: 12,
+                expectedToken: 42,
+                actualToken: 17,
                 maxAbsDiff: 0,
+                goldenHash: "golden-hash",
                 bandwidthSource: "",
                 error: "generated token mismatch",
                 commit: "abc123",
@@ -61,9 +73,21 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
     let decoded = try JSONDecoder().decode(ScorePayload.self, from: data)
 
     #expect(raw.contains("\"first_failing_layer\" : null"))
+    #expect(raw.contains("\"first_failing_case\" : \"case-b\""))
     #expect(raw.contains("\"first_failing_step\" : 12"))
+    #expect(raw.contains("\"expected_token\" : 42"))
+    #expect(raw.contains("\"actual_token\" : 17"))
+    #expect(raw.contains("\"checked_steps\" : 13"))
+    #expect(raw.contains("\"case_count\" : 2"))
+    #expect(raw.contains("\"golden_hash\" : \"golden-hash\""))
     #expect(decoded.metrics.firstFailingLayer == nil)
+    #expect(decoded.metrics.firstFailingCase == "case-b")
     #expect(decoded.metrics.firstFailingStep == 12)
+    #expect(decoded.metrics.expectedToken == 42)
+    #expect(decoded.metrics.actualToken == 17)
+    #expect(decoded.metrics.checkedSteps == 13)
+    #expect(decoded.metrics.caseCount == 2)
+    #expect(decoded.metrics.goldenHash == "golden-hash")
 }
 
 private func temporaryDirectory() throws -> URL {

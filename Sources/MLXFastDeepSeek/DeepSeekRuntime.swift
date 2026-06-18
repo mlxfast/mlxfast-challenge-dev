@@ -16,19 +16,23 @@ public struct CorrectnessOptions: Equatable {
 public struct CorrectnessReport: Codable, Equatable {
     public let passed: Bool
     public let checkedSteps: Int
+    public let caseCount: Int
     public let firstFailingCase: String?
     public let firstFailingStep: Int?
     public let expectedToken: Int?
     public let actualToken: Int?
+    public let goldenHash: String
     public let error: String
 
     enum CodingKeys: String, CodingKey {
         case passed
         case checkedSteps = "checked_steps"
+        case caseCount = "case_count"
         case firstFailingCase = "first_failing_case"
         case firstFailingStep = "first_failing_step"
         case expectedToken = "expected_token"
         case actualToken = "actual_token"
+        case goldenHash = "golden_hash"
         case error
     }
 }
@@ -47,35 +51,45 @@ public enum DeepSeekRuntime {
     public static func runCorrectness(_ options: CorrectnessOptions) throws -> CorrectnessReport {
         do {
             let cases = try loadGoldenCases(from: options.goldenPath)
+            let goldenHash = try fileSHA256(options.goldenPath)
             let config = try DeepSeekConfig.load(from: options.weightsPath)
             let loader = try DeepSeekWeightLoader(weightsPath: options.weightsPath)
             let weightCache = DeepSeekRuntimeWeightCache(loader: loader, config: config)
-            return runCorrectness(cases: cases, weightCache: weightCache)
+            return runCorrectness(
+                cases: cases,
+                weightCache: weightCache,
+                goldenHash: goldenHash
+            )
         } catch {
             return failedCorrectnessReport(checkedSteps: 0, error: "\(error)")
         }
     }
 
     public static func benchmark(_ options: BenchmarkOptions) -> ScorePayload {
-        var correctnessPassed = false
+        var correctnessReport: CorrectnessReport?
         do {
             _ = try BenchmarkPreflight.check(
                 weightsPath: options.weightsPath,
                 goldenPath: options.goldenPath
             )
+            let goldenHash = try fileSHA256(options.goldenPath)
             let cases = try loadGoldenCases(from: options.goldenPath)
             let config = try DeepSeekConfig.load(from: options.weightsPath)
             let correctnessLoader = try DeepSeekWeightLoader(weightsPath: options.weightsPath)
             let correctnessCache = DeepSeekRuntimeWeightCache(loader: correctnessLoader, config: config)
-            let correctness = runCorrectness(cases: cases, weightCache: correctnessCache)
+            let correctness = runCorrectness(
+                cases: cases,
+                weightCache: correctnessCache,
+                goldenHash: goldenHash
+            )
+            correctnessReport = correctness
             guard correctness.passed else {
                 return failedScore(
                     error: correctness.error.isEmpty ? "correctness gate failed" : correctness.error,
-                    firstFailingStep: correctness.firstFailingStep,
+                    correctness: correctness,
                     passedCorrectness: false
                 )
             }
-            correctnessPassed = true
 
             let benchmarkLoader = try DeepSeekWeightLoader(
                 weightsPath: options.weightsPath,
@@ -108,7 +122,7 @@ public enum DeepSeekRuntime {
             guard score.isFinite, score >= 0 else {
                 return failedScore(
                     error: "computed score was not finite",
-                    firstFailingStep: nil,
+                    correctness: correctnessReport,
                     passedCorrectness: true
                 )
             }
@@ -123,9 +137,15 @@ public enum DeepSeekRuntime {
                     prefillSecondsPerToken: prefillSecondsPerToken,
                     passedCorrectness: true,
                     numLayers: config.numHiddenLayers,
+                    checkedSteps: correctness.checkedSteps,
+                    caseCount: correctness.caseCount,
                     firstFailingLayer: nil,
+                    firstFailingCase: nil,
                     firstFailingStep: nil,
+                    expectedToken: nil,
+                    actualToken: nil,
                     maxAbsDiff: 0,
+                    goldenHash: correctness.goldenHash,
                     bandwidthSource: "mactop_hardware",
                     error: "",
                     commit: commitIdentifier(),
@@ -135,13 +155,18 @@ public enum DeepSeekRuntime {
                 )
             )
         } catch {
-            return failedScore(error: "\(error)", firstFailingStep: nil, passedCorrectness: correctnessPassed)
+            return failedScore(
+                error: "\(error)",
+                correctness: correctnessReport,
+                passedCorrectness: correctnessReport?.passed == true
+            )
         }
     }
 
     private static func runCorrectness(
         cases: [GoldenCase],
-        weightCache: DeepSeekRuntimeWeightCache
+        weightCache: DeepSeekRuntimeWeightCache,
+        goldenHash: String
     ) -> CorrectnessReport {
         var checkedSteps = 0
         do {
@@ -159,26 +184,35 @@ public enum DeepSeekRuntime {
                     return CorrectnessReport(
                         passed: false,
                         checkedSteps: checkedSteps + comparison.checkedSteps,
+                        caseCount: cases.count,
                         firstFailingCase: testCase.name,
                         firstFailingStep: comparison.firstFailingStep,
                         expectedToken: comparison.expectedToken,
                         actualToken: comparison.actualToken,
+                        goldenHash: goldenHash,
                         error: "generated token mismatch"
                     )
                 }
                 checkedSteps += comparison.checkedSteps
             }
         } catch {
-            return failedCorrectnessReport(checkedSteps: checkedSteps, error: "\(error)")
+            return failedCorrectnessReport(
+                checkedSteps: checkedSteps,
+                caseCount: cases.count,
+                goldenHash: goldenHash,
+                error: "\(error)"
+            )
         }
 
         return CorrectnessReport(
             passed: true,
             checkedSteps: checkedSteps,
+            caseCount: cases.count,
             firstFailingCase: nil,
             firstFailingStep: nil,
             expectedToken: nil,
             actualToken: nil,
+            goldenHash: goldenHash,
             error: ""
         )
     }
@@ -293,7 +327,7 @@ public enum DeepSeekRuntime {
 
     private static func failedScore(
         error: String,
-        firstFailingStep: Int?,
+        correctness: CorrectnessReport?,
         passedCorrectness: Bool
     ) -> ScorePayload {
         ScorePayload(
@@ -306,9 +340,15 @@ public enum DeepSeekRuntime {
                 prefillSecondsPerToken: 0,
                 passedCorrectness: passedCorrectness,
                 numLayers: MLXFastConstants.numHiddenLayers,
+                checkedSteps: correctness?.checkedSteps ?? 0,
+                caseCount: correctness?.caseCount ?? 0,
                 firstFailingLayer: nil,
-                firstFailingStep: firstFailingStep,
+                firstFailingCase: correctness?.firstFailingCase,
+                firstFailingStep: correctness?.firstFailingStep,
+                expectedToken: correctness?.expectedToken,
+                actualToken: correctness?.actualToken,
                 maxAbsDiff: 0,
+                goldenHash: correctness?.goldenHash ?? "",
                 bandwidthSource: "",
                 error: error,
                 commit: commitIdentifier(),
@@ -393,6 +433,12 @@ public enum DeepSeekRuntime {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    private static func fileSHA256(_ path: String) throws -> String {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func generateGreedyCached(
         promptTokens: [Int],
         steps: Int,
@@ -454,15 +500,19 @@ public enum DeepSeekRuntime {
 
     private static func failedCorrectnessReport(
         checkedSteps: Int,
+        caseCount: Int = 0,
+        goldenHash: String = "",
         error: String
     ) -> CorrectnessReport {
         CorrectnessReport(
             passed: false,
             checkedSteps: checkedSteps,
+            caseCount: caseCount,
             firstFailingCase: nil,
             firstFailingStep: nil,
             expectedToken: nil,
             actualToken: nil,
+            goldenHash: goldenHash,
             error: error
         )
     }

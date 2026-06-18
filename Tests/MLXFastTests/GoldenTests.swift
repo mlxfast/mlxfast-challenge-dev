@@ -53,6 +53,58 @@ func loadGoldenCasesRejectsOutOfRangeToken() throws {
     }
 }
 
+@Test
+func loadGoldenCasesRejectsMissingVersion() throws {
+    let directory = try temporaryDirectory()
+    let path = directory.appendingPathComponent("golden.json")
+    let expected = Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+    let json = """
+    {
+      "cases": [
+        {
+          "name": "missing-version",
+          "prompt_tokens": [1],
+          "expected_tokens": \(expected)
+        }
+      ]
+    }
+    """
+    try json.write(to: path, atomically: true, encoding: .utf8)
+
+    #expect(throws: MLXFastError.self) {
+        _ = try loadGoldenCases(from: path.path)
+    }
+}
+
+@Test
+func loadGoldenCasesRejectsDuplicateCaseNames() throws {
+    let directory = try temporaryDirectory()
+    let path = directory.appendingPathComponent("golden.json")
+    let expected = Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+    let json = """
+    {
+      "version": 1,
+      "cases": [
+        {
+          "name": "duplicate",
+          "prompt_tokens": [1],
+          "expected_tokens": \(expected)
+        },
+        {
+          "name": "duplicate",
+          "prompt_tokens": [2],
+          "expected_tokens": \(expected)
+        }
+      ]
+    }
+    """
+    try json.write(to: path, atomically: true, encoding: .utf8)
+
+    #expect(throws: MLXFastError.self) {
+        _ = try loadGoldenCases(from: path.path)
+    }
+}
+
 private func temporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
         UUID().uuidString,

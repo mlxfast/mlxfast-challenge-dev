@@ -43,9 +43,15 @@ public struct ScoreMetrics: Codable, Equatable {
     public let prefillSecondsPerToken: Double
     public let passedCorrectness: Bool
     public let numLayers: Int
+    public let checkedSteps: Int
+    public let caseCount: Int
     public let firstFailingLayer: Int?
+    public let firstFailingCase: String?
     public let firstFailingStep: Int?
+    public let expectedToken: Int?
+    public let actualToken: Int?
     public let maxAbsDiff: Double
+    public let goldenHash: String
     public let bandwidthSource: String
     public let error: String
     public let commit: String
@@ -60,9 +66,15 @@ public struct ScoreMetrics: Codable, Equatable {
         case prefillSecondsPerToken = "prefill_seconds_per_token"
         case passedCorrectness = "passed_correctness"
         case numLayers = "num_layers"
+        case checkedSteps = "checked_steps"
+        case caseCount = "case_count"
         case firstFailingLayer = "first_failing_layer"
+        case firstFailingCase = "first_failing_case"
         case firstFailingStep = "first_failing_step"
+        case expectedToken = "expected_token"
+        case actualToken = "actual_token"
         case maxAbsDiff = "max_abs_diff"
+        case goldenHash = "golden_hash"
         case bandwidthSource = "bandwidth_source"
         case error
         case commit
@@ -78,9 +90,15 @@ public struct ScoreMetrics: Codable, Equatable {
         prefillSecondsPerToken: Double,
         passedCorrectness: Bool,
         numLayers: Int,
+        checkedSteps: Int,
+        caseCount: Int,
         firstFailingLayer: Int?,
+        firstFailingCase: String?,
         firstFailingStep: Int?,
+        expectedToken: Int?,
+        actualToken: Int?,
         maxAbsDiff: Double,
+        goldenHash: String,
         bandwidthSource: String,
         error: String,
         commit: String,
@@ -94,9 +112,15 @@ public struct ScoreMetrics: Codable, Equatable {
         self.prefillSecondsPerToken = prefillSecondsPerToken
         self.passedCorrectness = passedCorrectness
         self.numLayers = numLayers
+        self.checkedSteps = checkedSteps
+        self.caseCount = caseCount
         self.firstFailingLayer = firstFailingLayer
+        self.firstFailingCase = firstFailingCase
         self.firstFailingStep = firstFailingStep
+        self.expectedToken = expectedToken
+        self.actualToken = actualToken
         self.maxAbsDiff = maxAbsDiff
+        self.goldenHash = goldenHash
         self.bandwidthSource = bandwidthSource
         self.error = error
         self.commit = commit
@@ -113,17 +137,35 @@ public struct ScoreMetrics: Codable, Equatable {
         try container.encode(prefillSecondsPerToken, forKey: .prefillSecondsPerToken)
         try container.encode(passedCorrectness, forKey: .passedCorrectness)
         try container.encode(numLayers, forKey: .numLayers)
+        try container.encode(checkedSteps, forKey: .checkedSteps)
+        try container.encode(caseCount, forKey: .caseCount)
         if let firstFailingLayer {
             try container.encode(firstFailingLayer, forKey: .firstFailingLayer)
         } else {
             try container.encodeNil(forKey: .firstFailingLayer)
+        }
+        if let firstFailingCase {
+            try container.encode(firstFailingCase, forKey: .firstFailingCase)
+        } else {
+            try container.encodeNil(forKey: .firstFailingCase)
         }
         if let firstFailingStep {
             try container.encode(firstFailingStep, forKey: .firstFailingStep)
         } else {
             try container.encodeNil(forKey: .firstFailingStep)
         }
+        if let expectedToken {
+            try container.encode(expectedToken, forKey: .expectedToken)
+        } else {
+            try container.encodeNil(forKey: .expectedToken)
+        }
+        if let actualToken {
+            try container.encode(actualToken, forKey: .actualToken)
+        } else {
+            try container.encodeNil(forKey: .actualToken)
+        }
         try container.encode(maxAbsDiff, forKey: .maxAbsDiff)
+        try container.encode(goldenHash, forKey: .goldenHash)
         try container.encode(bandwidthSource, forKey: .bandwidthSource)
         try container.encode(error, forKey: .error)
         try container.encode(commit, forKey: .commit)
@@ -149,9 +191,15 @@ extension ScorePayload {
                 prefillSecondsPerToken: 0,
                 passedCorrectness: false,
                 numLayers: MLXFastConstants.numHiddenLayers,
+                checkedSteps: 0,
+                caseCount: 0,
                 firstFailingLayer: nil,
+                firstFailingCase: nil,
                 firstFailingStep: nil,
+                expectedToken: nil,
+                actualToken: nil,
                 maxAbsDiff: 0,
+                goldenHash: "",
                 bandwidthSource: "",
                 error: error,
                 commit: commit,

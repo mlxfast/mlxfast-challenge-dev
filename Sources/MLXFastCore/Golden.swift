@@ -31,11 +31,21 @@ public func loadGoldenCases(
 
     let data = try Data(contentsOf: URL(fileURLWithPath: path))
     let decoded = try JSONDecoder().decode(GoldenFile.self, from: data)
+    guard decoded.version == 1 else {
+        throw MLXFastError.invalidInput("correctness golden file version must be 1")
+    }
     guard !decoded.cases.isEmpty else {
         throw MLXFastError.invalidInput("correctness golden file must contain at least one case")
     }
 
+    var names = Set<String>()
     for testCase in decoded.cases {
+        if testCase.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw MLXFastError.invalidInput("correctness golden case name must not be empty")
+        }
+        guard names.insert(testCase.name).inserted else {
+            throw MLXFastError.invalidInput("duplicate correctness golden case name \(testCase.name)")
+        }
         if testCase.promptTokens.isEmpty {
             throw MLXFastError.invalidInput("\(testCase.name).prompt_tokens must not be empty")
         }

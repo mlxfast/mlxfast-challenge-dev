@@ -62,33 +62,33 @@ public enum DeepSeekCorrectness {
         actual: [Int],
         steps: Int = MLXFastConstants.correctnessSteps
     ) -> CorrectnessTokenComparison {
-        let count = min(steps, expected.count)
-        for step in 0..<count {
+        guard steps > 0 else {
+            return CorrectnessTokenComparison(
+                passed: true,
+                checkedSteps: 0,
+                firstFailingStep: nil,
+                expectedToken: nil,
+                actualToken: nil
+            )
+        }
+
+        for step in 0..<steps {
+            let expectedToken = step < expected.count ? expected[step] : nil
             let actualToken = step < actual.count ? actual[step] : nil
-            if actualToken != expected[step] {
+            if actualToken != expectedToken {
                 return CorrectnessTokenComparison(
                     passed: false,
                     checkedSteps: step + 1,
                     firstFailingStep: step,
-                    expectedToken: expected[step],
+                    expectedToken: expectedToken,
                     actualToken: actualToken
                 )
             }
         }
 
-        if actual.count < count {
-            return CorrectnessTokenComparison(
-                passed: false,
-                checkedSteps: actual.count + 1,
-                firstFailingStep: actual.count,
-                expectedToken: expected[actual.count],
-                actualToken: nil
-            )
-        }
-
         return CorrectnessTokenComparison(
             passed: true,
-            checkedSteps: count,
+            checkedSteps: steps,
             firstFailingStep: nil,
             expectedToken: nil,
             actualToken: nil
