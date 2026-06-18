@@ -80,6 +80,34 @@ func decodeTimingPlanRejectsInvalidRanges() throws {
 }
 
 @Test
+func benchmarkPromptPlanUsesFirstGoldenPromptForPrefillAndDecodeSeed() throws {
+    let prompt = Array(0..<MLXFastConstants.benchmarkPrefillPromptTokens + 8)
+    let plan = try BenchmarkPrompt.plan(from: [
+        GoldenCase(
+            name: "benchmark",
+            promptTokens: prompt,
+            expectedTokens: Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+        ),
+    ])
+
+    #expect(plan.prefillTokens == Array(prompt.prefix(MLXFastConstants.benchmarkPrefillPromptTokens)))
+    #expect(plan.decodeSeedTokens == Array(prompt.prefix(MLXFastConstants.benchmarkDecodeSeedTokens)))
+}
+
+@Test
+func benchmarkPromptPlanRejectsShortFirstGoldenPrompt() {
+    #expect(throws: MLXFastError.self) {
+        _ = try BenchmarkPrompt.plan(from: [
+            GoldenCase(
+                name: "short",
+                promptTokens: [1],
+                expectedTokens: Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+            ),
+        ])
+    }
+}
+
+@Test
 func mactopLocatorUsesExplicitExecutableOverride() throws {
     let directory = try temporaryDirectory()
     let executable = directory.appendingPathComponent("mactop")
@@ -132,6 +160,20 @@ func benchmarkPreflightRejectsMalformedGolden() throws {
     defer { try? FileManager.default.removeItem(at: fixture.root) }
 
     #expect(throws: Error.self) {
+        _ = try BenchmarkPreflight.check(
+            weightsPath: fixture.weights.path,
+            goldenPath: fixture.golden.path,
+            environment: ["MLXFAST_MACTOP_BIN": fixture.mactop.path]
+        )
+    }
+}
+
+@Test
+func benchmarkPreflightRejectsShortBenchmarkPrompt() throws {
+    let fixture = try makePreflightFixture(goldenContents: validGoldenJSON(promptTokens: [1]))
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+    #expect(throws: MLXFastError.self) {
         _ = try BenchmarkPreflight.check(
             weightsPath: fixture.weights.path,
             goldenPath: fixture.golden.path,
@@ -252,7 +294,10 @@ private func minimalDeepSeekConfigJSON() -> String {
     """
 }
 
-private func validGoldenJSON() -> String {
+private func validGoldenJSON(
+    promptTokens: [Int] = Array(repeating: 1, count: MLXFastConstants.benchmarkPrefillPromptTokens)
+) -> String {
+    let prompt = arrayJSON(promptTokens)
     let expected = arrayJSON(Array(repeating: 7, count: MLXFastConstants.correctnessSteps))
     return """
     {
@@ -260,7 +305,7 @@ private func validGoldenJSON() -> String {
       "cases": [
         {
           "name": "preflight",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(prompt),
           "expected_tokens": \(expected)
         }
       ]

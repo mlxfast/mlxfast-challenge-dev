@@ -82,7 +82,7 @@ public enum DeepSeekRuntime {
                 expertStreamingConfig: ExpertStreamingConfig(recordsMetrics: true)
             )
             let benchmarkCache = DeepSeekRuntimeWeightCache(loader: benchmarkLoader, config: config)
-            let testCase = cases[0]
+            let promptPlan = try BenchmarkPrompt.plan(from: cases)
             let idleSamples = try MactopSession.measureIdleSamples()
             guard !idleSamples.isEmpty else {
                 throw MLXFastError.invalidInput("mactop idle measurement produced no samples")
@@ -91,11 +91,11 @@ public enum DeepSeekRuntime {
 
             Memory.peakMemory = 0
             let prefillSecondsPerToken = try measurePrefillSecondsPerToken(
-                promptTokens: testCase.promptTokens,
+                promptTokens: promptPlan.prefillTokens,
                 weightCache: benchmarkCache
             )
             let decode = try measureDecode(
-                seedTokens: decodeSeed(from: testCase.promptTokens),
+                seedTokens: promptPlan.decodeSeedTokens,
                 weightCache: benchmarkCache,
                 idleGBPerSecond: idleGBPerSecond
             )
@@ -289,14 +289,6 @@ public enum DeepSeekRuntime {
             _ = try? session.stop()
             throw error
         }
-    }
-
-    private static func decodeSeed(from promptTokens: [Int]) throws -> [Int] {
-        let count = min(MLXFastConstants.benchmarkDecodeSeedTokens, promptTokens.count)
-        guard count > 0 else {
-            throw MLXFastError.invalidInput("benchmark prompt must contain decode seed tokens")
-        }
-        return Array(promptTokens.prefix(count))
     }
 
     private static func failedScore(
