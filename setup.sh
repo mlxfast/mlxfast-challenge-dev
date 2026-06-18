@@ -172,6 +172,7 @@ download_reference_file() {
     --fail \
     --location \
     --retry 5 \
+    --retry-all-errors \
     --retry-delay 2 \
     --continue-at - \
     --output "${output_path}" \
@@ -222,6 +223,7 @@ download_reference_shards() {
       --fail \
       --location \
       --retry 5 \
+      --retry-all-errors \
       --retry-delay 2 \
       --continue-at - \
       --silent \
