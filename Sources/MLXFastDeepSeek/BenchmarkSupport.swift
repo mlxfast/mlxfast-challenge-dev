@@ -193,29 +193,60 @@ final class MactopSession: @unchecked Sendable {
         self.process = process
     }
 
-    static func measureIdleSamples(sampleCount: Int = 30) throws -> [Double] {
-        let output = Pipe()
-        let errorOutput = Pipe()
+    static func measureIdleSamples(
+        sampleCount: Int = 30,
+        timeoutSeconds: TimeInterval = 10,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> [Double] {
+        precondition(sampleCount > 0)
+        precondition(timeoutSeconds > 0)
+
         let process = try configuredProcess(
             arguments: [
                 "--headless",
-                "--count", "\(sampleCount)",
                 "--interval", "100",
                 "--format", "json",
-            ]
+            ],
+            environment: environment
         )
-        process.standardOutput = output
-        process.standardError = errorOutput
+        let session = MactopSession(process: process)
+        process.standardOutput = session.output
+        process.standardError = session.errorOutput
+        session.capture(session.output.fileHandleForReading, intoErrorBuffer: false)
+        session.capture(session.errorOutput.fileHandleForReading, intoErrorBuffer: true)
         try process.run()
+
+        let sampleWindowSeconds = min(timeoutSeconds, max(1, Double(sampleCount) * 0.1 + 1))
+        let deadline = Date().addingTimeInterval(sampleWindowSeconds)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: min(0.05, deadline.timeIntervalSinceNow))
+        }
+        let terminatedForSampling = process.isRunning
+        if process.isRunning {
+            process.terminate()
+        }
         process.waitUntilExit()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        if process.terminationStatus != 0 {
-            let errorData = errorOutput.fileHandleForReading.readDataToEndOfFile()
+        session.output.fileHandleForReading.readabilityHandler = nil
+        session.errorOutput.fileHandleForReading.readabilityHandler = nil
+        session.appendAvailable(session.output.fileHandleForReading, intoErrorBuffer: false)
+        session.appendAvailable(session.errorOutput.fileHandleForReading, intoErrorBuffer: true)
+
+        let samples = MactopBandwidth.parseSamples(from: session.outputSnapshot())
+        if samples.count >= sampleCount {
+            return Array(samples.prefix(sampleCount))
+        }
+
+        if terminatedForSampling {
             throw MLXFastError.invalidInput(
-                "mactop idle measurement failed: \(String(data: errorData, encoding: .utf8) ?? "")"
+                "mactop idle measurement collected \(samples.count) usable samples in \(sampleWindowSeconds)s; expected \(sampleCount)"
             )
         }
-        return MactopBandwidth.parseSamples(from: data)
+        if process.terminationStatus != 0 {
+            throw MLXFastError.invalidInput(
+                "mactop idle measurement failed: \(String(data: session.errorSnapshot(), encoding: .utf8) ?? "")"
+            )
+        }
+        return samples
     }
 
     static func start() throws -> MactopSession {
@@ -260,9 +291,12 @@ final class MactopSession: @unchecked Sendable {
         return samples
     }
 
-    private static func configuredProcess(arguments: [String]) throws -> Process {
+    private static func configuredProcess(
+        arguments: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> Process {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: try MactopLocator.executablePath())
+        process.executableURL = URL(fileURLWithPath: try MactopLocator.executablePath(environment: environment))
         process.arguments = arguments
         return process
     }
@@ -285,5 +319,17 @@ final class MactopSession: @unchecked Sendable {
             outputData.append(data)
         }
         lock.unlock()
+    }
+
+    private func outputSnapshot() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return outputData
+    }
+
+    private func errorSnapshot() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return errorData
     }
 }

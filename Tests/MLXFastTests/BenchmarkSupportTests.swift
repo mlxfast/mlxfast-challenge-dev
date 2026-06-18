@@ -125,6 +125,50 @@ func mactopLocatorUsesExplicitExecutableOverride() throws {
 }
 
 @Test
+func mactopIdleMeasurementStopsAfterEnoughSamples() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let executable = try writeExecutableScript(
+        directory.appendingPathComponent("mactop"),
+        contents: """
+        #!/bin/sh
+        printf '%s\\n' '{"soc_metrics":{"dram_bw_combined_gbs":6}}'
+        printf '%s\\n' '{"soc_metrics":{"dram_bw_combined_gbs":7}}'
+        sleep 5
+        """
+    )
+
+    let samples = try MactopSession.measureIdleSamples(
+        sampleCount: 2,
+        timeoutSeconds: 1,
+        environment: ["MLXFAST_MACTOP_BIN": executable.path]
+    )
+
+    #expect(samples == [6, 7])
+}
+
+@Test
+func mactopIdleMeasurementTimesOutWithoutSamples() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let executable = try writeExecutableScript(
+        directory.appendingPathComponent("mactop"),
+        contents: """
+        #!/bin/sh
+        sleep 5
+        """
+    )
+
+    #expect(throws: MLXFastError.self) {
+        _ = try MactopSession.measureIdleSamples(
+            sampleCount: 1,
+            timeoutSeconds: 0.2,
+            environment: ["MLXFAST_MACTOP_BIN": executable.path]
+        )
+    }
+}
+
+@Test
 func benchmarkPreflightAcceptsRequiredArtifacts() throws {
     let fixture = try makePreflightFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -545,6 +589,15 @@ private func writeSafetensors(_ path: URL, tensors: [TensorFixture]) throws {
 
 private func arrayJSON(_ values: [Int]) -> String {
     "[\(values.map(String.init).joined(separator: ","))]"
+}
+
+private func writeExecutableScript(_ path: URL, contents: String) throws -> URL {
+    try contents.write(to: path, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: path.path
+    )
+    return path
 }
 
 private func temporaryDirectory() throws -> URL {
