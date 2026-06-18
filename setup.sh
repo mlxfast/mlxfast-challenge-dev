@@ -6,6 +6,7 @@ REFERENCE_MODEL_REPO="${MLXFAST_REFERENCE_MODEL_REPO:-mlx-community/DeepSeek-V4-
 REFERENCE_REVISION="${MLXFAST_REFERENCE_REVISION:-main}"
 REFERENCE_BASE_URL="${MLXFAST_REFERENCE_BASE_URL:-https://huggingface.co/${REFERENCE_MODEL_REPO}/resolve/${REFERENCE_REVISION}}"
 REFERENCE_MIN_FREE_GIB="${MLXFAST_REFERENCE_MIN_FREE_GIB:-170}"
+REFERENCE_DOWNLOAD_JOBS="${MLXFAST_REFERENCE_DOWNLOAD_JOBS:-4}"
 SWIFT_BIN="${MLXFAST_SWIFT_BIN:-.build/release/mlxfast-swift}"
 REFERENCE_METADATA_FILES=(
   "README.md"
@@ -178,6 +179,60 @@ download_reference_file() {
   touch "${marker_path}"
 }
 
+download_reference_shards() {
+  local output_dir="$1"
+  shift
+  local jobs="${REFERENCE_DOWNLOAD_JOBS}"
+
+  if ! [[ "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "setup.sh: MLXFAST_REFERENCE_DOWNLOAD_JOBS must be a positive integer" >&2
+    return 1
+  fi
+
+  if [[ "${jobs}" == "1" || "$#" -le 1 ]]; then
+    local file
+    for file in "$@"; do
+      download_reference_file "${file}" "${output_dir}/${file}"
+    done
+    return 0
+  fi
+
+  echo "setup.sh: downloading $# safetensors shard(s) with ${jobs} parallel job(s)"
+  export REFERENCE_BASE_URL
+  printf '%s\0' "$@" | xargs -0 -I{} -P "${jobs}" bash -c '
+    set -euo pipefail
+    file="$1"
+    output_dir="$2"
+    output_path="${output_dir}/${file}"
+    marker_path="${output_path}.complete"
+    url="${REFERENCE_BASE_URL%/}/${file}"
+
+    if [[ -f "${marker_path}" && -s "${output_path}" ]]; then
+      echo "setup.sh: already downloaded ${file}"
+      exit 0
+    fi
+
+    if [[ "${url}" == http://* || "${url}" == https://* ]]; then
+      url="${url}?download=true"
+    fi
+
+    mkdir -p "$(dirname "${output_path}")"
+    echo "setup.sh: downloading ${file}"
+    curl \
+      --fail \
+      --location \
+      --retry 5 \
+      --retry-delay 2 \
+      --continue-at - \
+      --silent \
+      --show-error \
+      --output "${output_path}" \
+      "${url}"
+    touch "${marker_path}"
+    echo "setup.sh: downloaded ${file}"
+  ' _ {} "${output_dir}"
+}
+
 list_reference_shards() {
   local index_path="$1"
 
@@ -299,9 +354,7 @@ EOF
   fi
 
   echo "setup.sh: checkpoint index lists ${#shard_files[@]} safetensors shard(s)"
-  for file in "${shard_files[@]}"; do
-    download_reference_file "${file}" "${partial_dir}/${file}"
-  done
+  download_reference_shards "${partial_dir}" "${shard_files[@]}"
   verify_reference_weights "${partial_dir}"
 
   find "${partial_dir}" -name "*.complete" -type f -delete
