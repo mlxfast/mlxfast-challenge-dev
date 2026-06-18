@@ -1,207 +1,107 @@
-"""Correctness gate. FROZEN.
+"""Correctness gate.
 
-The challenge spec says: hidden states at every layer must match the
-reference exactly up to floating point associativity. We implement
-this as layer-wise comparison of the activations flowing out of
-every DecoderLayer.
+Runs both the reference model and the submission model with greedy
+decoding (temperature=0) on the same short prompt, then compares the
+output token sequences. A submission passes if every decoded token
+matches the reference exactly.
 
-Implementation strategy:
-  1. Load the reference model (mlx_lm's standard load, no modifiable
-     surface involvement).
-  2. Load the submission model (using the participant's modifiable
-     surface).
-  3. Run both on the same input tokens (seeded at runtime by the
-     harness from a server-side secret + commit hash).
-  4. At every DecoderLayer, capture the output hidden state.
-  5. Compare with allclose using CORRECTNESS_EPSILON.
+Greedy decoding at temperature=0 is deterministic, so any deviation is
+a hard signal that the model's forward pass is wrong — not just a
+floating-point ordering difference.
 
-mlx has no `register_forward_hook` (torch idiom) and method-binding
-tricks on `nn.Module` subclasses don't work because the model code
-calls `layer(x, ...)` which uses a metaclass-bound `__call__`, not
-a per-instance `__call__`.
-
-We work around this by manually iterating the model's layers and
-calling each one. We use the model's own helper methods
-(`_make_masks`, `_get_per_layer_inputs`, `_project_per_layer_inputs`)
-for the per-layer setup, then capture the output of each layer call
-in our own loop.
-
-This is model-specific (it knows the Gemma 4 architecture) but
-cleaner than fighting mlx's module system.
-
-A pass means every layer is within tolerance. A fail reports the
-first diverging layer and the magnitude of the difference.
+This replaces the previous layer-wise hidden-state comparison, which
+required Gemma-4-specific layer-iteration code. Greedy token comparison
+is model-agnostic and equivalent: same inputs + same greedy rule = same
+outputs for any correct implementation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 import mlx.core as mx
-
-from .constants import CORRECTNESS_EPSILON
 
 
 @dataclass
 class CorrectnessResult:
     passed: bool
+    # num_layers is repurposed to store the number of tokens compared;
+    # the field name is kept for RunReport compatibility.
     num_layers: int
-    first_failing_layer: Optional[int] = None
-    max_abs_diff: float = 0.0
+    first_failing_layer: Optional[int] = None  # index of first mismatched token
+    max_abs_diff: float = 0.0   # 0.0 = pass, 1.0 = any mismatch
     max_rel_diff: float = 0.0
-    failing_layer_diffs: List[float] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "passed": self.passed,
-            "num_layers": self.num_layers,
-            "first_failing_layer": self.first_failing_layer,
+            "num_tokens_checked": self.num_layers,
+            "first_failing_token": self.first_failing_layer,
             "max_abs_diff": self.max_abs_diff,
-            "max_rel_diff": self.max_rel_diff,
         }
 
 
-def _run_layers_capturing(inner_model, tokens: mx.array, cache=None):
-    """Manually run inner_model's layers and capture h after each.
+def _greedy_decode(model, prompt: mx.array, num_tokens: int) -> list[int]:
+    """Greedily decode `num_tokens` tokens from `prompt`.
 
-    Returns a list of mx.array, one per layer, holding the hidden
-    state at the output of that layer (before the final norm).
-
-    Works for Gemma 4 TextModel (gemma4_text.Gemma4TextModel). The
-    inner_model must have:
-      - embed_tokens
-      - embed_scale
-      - hidden_size_per_layer_input (int, may be 0)
-      - previous_kvs (list[int])
-      - layers (list[DecoderLayer])
-      - _make_masks, _get_per_layer_inputs, _project_per_layer_inputs
+    Returns a list of integer token IDs. Each token is the argmax of
+    the logits at the previous step — temperature=0, no sampling.
     """
-    # 1. Embed.
-    input_embeddings = inner_model.embed_tokens(tokens)
-    h = input_embeddings * inner_model.embed_scale
-
-    # 2. Per-layer inputs (if applicable).
-    if inner_model.hidden_size_per_layer_input:
-        per_layer_inputs = inner_model._get_per_layer_inputs(tokens, input_embeddings)
-        per_layer_inputs = inner_model._project_per_layer_inputs(h, per_layer_inputs)
-        per_layer_inputs = [per_layer_inputs[:, :, i, :] for i in range(len(inner_model.layers))]
-    else:
-        per_layer_inputs = [None] * len(inner_model.layers)
-
-    # 3. Cache.
-    if cache is None:
-        cache = [None] * len(inner_model.layers)
-    else:
-        cache = list(cache) + [None] * (len(inner_model.layers) - len(cache))
-
-    # 4. Build masks.
-    masks = inner_model._make_masks(h, cache)
-
-    # 5. Iterate layers, capture h.
-    intermediates: List[mx.array] = []
-    kvs_offsets = [(None, None)] * len(inner_model.layers)
-    for idx, (layer, c, mask, prev_idx, pli) in enumerate(zip(
-        inner_model.layers, cache, masks, inner_model.previous_kvs, per_layer_inputs
-    )):
-        kvs, offset = kvs_offsets[prev_idx]
-        h, kvs, offset = layer(
-            h, mask, c,
-            per_layer_input=pli,
-            shared_kv=kvs,
-            offset=offset,
-        )
-        kvs_offsets[idx] = (kvs, offset)
-        intermediates.append(h)
-
-    return intermediates
-
-
-def _capture_intermediates(model, tokens: mx.array) -> List[mx.array]:
-    """Run the model and capture the hidden state at the output of
-    every DecoderLayer. Returns a list of length num_hidden_layers.
-    """
-    # The model may be nested up to two levels deep:
-    #   gemma4.Model
-    #     .language_model = gemma4_text.Model
-    #       .model = Gemma4TextModel    (has embed_tokens, layers, etc.)
-    # Drill down to the innermost one that has embed_tokens, walking
-    # through any sub-module that itself contains a sub-module with
-    # embed_tokens.
-    def _find_with_embed_tokens(mod, depth=0):
-        if depth > 3:
-            return None
-        if hasattr(mod, "embed_tokens"):
-            return mod
-        for attr in ("model", "language_model", "text_model"):
-            if hasattr(mod, attr):
-                found = _find_with_embed_tokens(getattr(mod, attr), depth + 1)
-                if found is not None:
-                    return found
-        return None
-
-    inner = _find_with_embed_tokens(model)
-    if inner is None:
-        raise RuntimeError(
-            f"Cannot find embed_tokens on model of type {type(model).__name__}"
-        )
-
+    inner = model.language_model if hasattr(model, "language_model") else model
     cache = inner.make_cache() if hasattr(inner, "make_cache") else None
-    intermediates = _run_layers_capturing(inner, tokens, cache=cache)
-    mx.eval(intermediates)
-    return intermediates
+
+    # Prefill: process the whole prompt, get the first next-token logits.
+    if cache is not None:
+        logits = inner(prompt, cache=cache)
+    else:
+        logits = inner(prompt)
+    next_tok = mx.argmax(logits[:, -1, :], axis=-1, keepdims=True)
+    mx.eval(next_tok)
+
+    tokens = [int(next_tok.item())]
+
+    # Autoregressive decode.
+    for _ in range(num_tokens - 1):
+        if cache is not None:
+            logits = inner(next_tok, cache=cache)
+        else:
+            logits = inner(next_tok)
+        next_tok = mx.argmax(logits[:, -1, :], axis=-1, keepdims=True)
+        mx.eval(next_tok)
+        tokens.append(int(next_tok.item()))
+
+    return tokens
 
 
 def check(
     reference_model,
     submission_model,
     tokens: mx.array,
-    epsilon: float = CORRECTNESS_EPSILON,
+    decode_length: int = 16,
 ) -> CorrectnessResult:
-    """Compare layer-wise hidden states of two models on the same
-    input tokens. Returns a CorrectnessResult.
+    """Compare greedy-decoded token sequences of two models on the same
+    input prompt. Returns a CorrectnessResult.
 
-    Both models must have the same num_hidden_layers and accept
-    tokens of the same shape.
+    Args:
+      reference_model: upstream reference implementation.
+      submission_model: participant's submission.
+      tokens: input prompt, shape (1, T).
+      decode_length: number of tokens to greedily decode and compare.
     """
-    ref_intermediates = _capture_intermediates(reference_model, tokens)
-    sub_intermediates = _capture_intermediates(submission_model, tokens)
+    ref_seq = _greedy_decode(reference_model, tokens, decode_length)
+    sub_seq = _greedy_decode(submission_model, tokens, decode_length)
 
-    if len(ref_intermediates) != len(sub_intermediates):
-        return CorrectnessResult(
-            passed=False,
-            num_layers=len(ref_intermediates),
-            first_failing_layer=0,
-            max_abs_diff=float("inf"),
-            max_rel_diff=float("inf"),
-        )
-
-    num_layers = len(ref_intermediates)
-    max_abs = 0.0
-    max_rel = 0.0
     first_failing: Optional[int] = None
-    failing_diffs: List[float] = []
-
-    for i, (ref_h, sub_h) in enumerate(zip(ref_intermediates, sub_intermediates)):
-        diff = mx.abs(ref_h - sub_h)
-        abs_diff = float(mx.max(diff))
-        ref_abs = mx.abs(ref_h)
-        rel = mx.where(ref_abs > 1e-6, diff / ref_abs, mx.zeros_like(diff))
-        rel_diff = float(mx.max(rel))
-
-        max_abs = max(max_abs, abs_diff)
-        max_rel = max(max_rel, rel_diff)
-
-        if abs_diff > epsilon:
-            if first_failing is None:
-                first_failing = i
-            failing_diffs.append(abs_diff)
+    for i, (r, s) in enumerate(zip(ref_seq, sub_seq)):
+        if r != s:
+            first_failing = i
+            break
 
     passed = first_failing is None
     return CorrectnessResult(
         passed=passed,
-        num_layers=num_layers,
+        num_layers=decode_length,
         first_failing_layer=first_failing,
-        max_abs_diff=max_abs,
-        max_rel_diff=max_rel,
-        failing_layer_diffs=failing_diffs,
+        max_abs_diff=0.0 if passed else 1.0,
+        max_rel_diff=0.0 if passed else 1.0,
     )

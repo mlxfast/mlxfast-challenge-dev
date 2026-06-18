@@ -44,7 +44,6 @@ from mlxfast.harness import run as harness_run
 report = harness_run.run(
     weights_path=__import__("pathlib").Path({weights!r}),
     note={note!r},
-    secret={secret!r},
 )
 print("__MLXFAST_RESULT__" + json.dumps(report.to_tsv_row().split("\\t")))
 '''
@@ -53,7 +52,6 @@ print("__MLXFAST_RESULT__" + json.dumps(report.to_tsv_row().split("\\t")))
 def run_in_subprocess(
     weights_path: Path,
     note: str,
-    secret: str = "",
     cwd: Optional[Path] = None,
     python: str = sys.executable,
 ) -> dict:
@@ -63,7 +61,6 @@ def run_in_subprocess(
         cwd=str(cwd),
         weights=str(weights_path.resolve()),
         note=note,
-        secret=secret,
     )
 
     proc = subprocess.run(

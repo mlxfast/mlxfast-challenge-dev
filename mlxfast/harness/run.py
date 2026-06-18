@@ -5,22 +5,35 @@ This is the function the CLI's `mlxfast run` calls. It:
   1. Verifies the modifiable surface exists and is loadable.
   2. Loads the reference model (no modifiable surface involvement).
   3. Loads the submission model (using the modifiable surface).
-  4. Generates a runtime-random prompt and seeds the decode.
-  5. Runs the correctness gate.
-  6. Measures peak RAM, bandwidth, latency.
-  7. Computes the score.
-  8. Returns a RunReport that the CLI appends to results.tsv.
+  4. Loads two real-text prompts from files or CI env vars.
+  5. Runs the correctness gate (greedy token comparison, 64-token prompt).
+  6. Measures peak RAM, bandwidth, decode latency (64-token context).
+  7. Measures prefill latency as the cost of a single 32k-token context fill.
+  8. Computes the score.
+  9. Returns a RunReport that the CLI appends to results.tsv.
 
 The harness runs in a subprocess (started by _harness_runner.py)
 so that peak RAM is measured via the subprocess's resident set size
 rather than the parent CLI's.
+
+Prompts
+-------
+Two text files are required:
+  prompts/correctness_local.txt  — short (CORRECTNESS_PROMPT_TOKENS tokens)
+  prompts/benchmark_local.txt    — long  (BENCHMARK_PROMPT_TOKENS tokens)
+
+The server overrides these via env vars:
+  MLXFAST_CORRECTNESS_PROMPT  — UTF-8 text, same token length
+  MLXFAST_BENCHMARK_PROMPT    — UTF-8 text, same token length
+
+Both local and server versions tokenise to the same length but have
+different content, so hardcoded outputs fail server-side validation.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import random
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -28,7 +41,6 @@ from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
-import numpy as np
 
 from . import bandwidth, constants, correctness, score
 
@@ -122,14 +134,36 @@ def _versions() -> tuple[str, str]:
     return mlx_v, mlx_lm_v
 
 
-def _seed_prompt(vocab_size: int, length: int, seed: int) -> mx.array:
-    """Generate a random prompt of `length` tokens, seeded by `seed`.
+def _load_prompt_text(env_var: str, local_path: Path) -> str:
+    """Return prompt text from a CI env var (server) or local file (dev).
 
-    Returns shape (1, length) so embed_tokens gives (1, length, hidden).
+    The server sets the env var to its private prompt text so participants
+    cannot predict the input. Locally, the committed file is used instead.
     """
-    rng = np.random.default_rng(seed)
-    tokens = rng.integers(0, vocab_size, size=(1, length)).astype(np.int32)
-    return mx.array(tokens)
+    text = os.environ.get(env_var, "").strip()
+    if text:
+        return text
+    if local_path.exists():
+        return local_path.read_text().strip()
+    raise FileNotFoundError(
+        f"No prompt found: set {env_var} env var or provide {local_path}. "
+        f"Run scripts/make_prompts.py to generate local prompt files."
+    )
+
+
+def _tokenize(tokenizer, text: str, max_len: int) -> mx.array:
+    """Tokenize `text`, truncate to `max_len` tokens, return shape (1, max_len).
+
+    Raises if the text tokenises to fewer than max_len tokens — the prompt
+    files must be long enough. Run scripts/make_prompts.py to regenerate.
+    """
+    ids = tokenizer.encode(text)
+    if len(ids) < max_len:
+        raise ValueError(
+            f"Prompt too short after tokenisation: {len(ids)} tokens, "
+            f"need at least {max_len}. Run scripts/make_prompts.py."
+        )
+    return mx.array(ids[:max_len], dtype=mx.int32)[None]
 
 
 def _peak_gpu_memory_gb() -> float:
@@ -274,22 +308,19 @@ def _measure_latency_and_memory(model, prompt: mx.array, num_tokens: int) -> tup
 
 
 def _measure_prefill_latency(model, prompt: mx.array) -> float:
-    """Measure prefill seconds-per-token for a full prompt forward pass.
+    """Measure prefill seconds-per-token for a full 32k-token context fill.
 
-    Prefill processes the entire prompt in parallel (one forward call
-    with the full sequence), which is the dominant cost for long-context
-    use cases and reflects the per-token cost of any schema that
-    requires setup work proportional to sequence length.
+    Prefill processes the entire prompt in one batched forward call.
+    The cost is reported as wall-clock seconds divided by the prompt
+    length, so it is directly comparable across submissions regardless
+    of prompt length changes.
 
-    A transform that shifts computation from the decode phase to the
-    prefill phase — e.g. computing sparse representations per prompt —
-    will show up here rather than in decode_seconds_per_token.
+    A single warmup pass runs first (JIT compile + weight cache warm-up),
+    then one timed pass. A second timed pass is omitted because at 32k
+    tokens the run time is substantial and variance is low.
 
     Returns:
-      Wall-clock seconds per prompt token, averaged over two timed
-      runs (after one warmup). A fresh KV cache is created for each
-      run so results are comparable across submissions with different
-      cache layouts.
+      Wall-clock seconds per prompt token for the timed pass.
     """
     inner = model.language_model if hasattr(model, "language_model") else model
     prompt_len = prompt.shape[-1]
@@ -302,27 +333,19 @@ def _measure_prefill_latency(model, prompt: mx.array) -> float:
             out = inner(prompt)
         mx.eval(out)
 
-    # Warmup — load weights, fill caches, JIT compile.
+    # Warmup — JIT compile, fill weight cache.
     _prefill_once()
 
-    # Two timed runs, take the mean.
-    times = []
-    for _ in range(2):
-        t0 = time.perf_counter()
-        _prefill_once()
-        times.append(time.perf_counter() - t0)
+    # Single timed pass — cost of filling the full 32k context.
+    t0 = time.perf_counter()
+    _prefill_once()
+    elapsed = time.perf_counter() - t0
 
-    return (sum(times) / len(times)) / prompt_len
+    return elapsed / prompt_len
 
 
-def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
-    """The main harness entry point.
-
-    `secret` is the server-side secret used to seed the prompt
-    generation. If empty (local dev), a deterministic seed derived
-    from the git commit is used. The server passes a real secret
-    so the prompt is unpredictable to the participant.
-    """
+def run(weights_path: Path, note: str) -> RunReport:
+    """The main harness entry point."""
     import datetime
 
     timestamp = datetime.datetime.utcnow().isoformat() + "Z"
@@ -330,23 +353,33 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
     mlx_v, mlx_lm_v = _versions()
     harness_hash = constants.compute_harness_hash()
 
-    # Seed the prompt.
-    seed = int(hashlib_sha256(f"{secret}|{commit}")) % (2**31)
-
     try:
         ref_model, ref_tokenizer, sub_model = _load_models(weights_path)
 
-        # Build a prompt of typical length.
-        vocab_size = 262144  # Gemma 4 vocab
-        prompt = _seed_prompt(
-            vocab_size,
-            constants.PROMPT_SEED_PREFIX_LENGTH,
-            seed,
+        # Load prompt text from CI env vars (server) or local files (dev).
+        correctness_text = _load_prompt_text(
+            constants.ENV_CORRECTNESS_PROMPT,
+            constants.CORRECTNESS_PROMPT_FILE,
+        )
+        benchmark_text = _load_prompt_text(
+            constants.ENV_BENCHMARK_PROMPT,
+            constants.BENCHMARK_PROMPT_FILE,
         )
 
-        # Correctness check first. A model that fails correctness
-        # gets scored as inf and we skip the expensive measurement.
-        correctness_result = correctness.check(ref_model, sub_model, prompt)
+        # Tokenize. Each call truncates to the declared token count and
+        # raises if the source text is too short.
+        correctness_tokens = _tokenize(
+            ref_tokenizer, correctness_text, constants.CORRECTNESS_PROMPT_TOKENS
+        )
+        benchmark_tokens = _tokenize(
+            ref_tokenizer, benchmark_text, constants.BENCHMARK_PROMPT_TOKENS
+        )
+
+        # Correctness gate: greedy token comparison on the short prompt.
+        # Fails fast — a model that doesn't pass gets scored as inf.
+        correctness_result = correctness.check(
+            ref_model, sub_model, correctness_tokens, decode_length=16
+        )
 
         if not correctness_result.passed:
             return RunReport(
@@ -367,22 +400,15 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
                 mlx_lm_version=mlx_lm_v,
             )
 
-        # Build the prefill prompt (longer than the correctness seed).
-        prefill_prompt = _seed_prompt(
-            vocab_size,
-            constants.PREFILL_PROMPT_LENGTH,
-            seed ^ 0xDEADBEEF,  # distinct seed from correctness prompt
-        )
-
-        # Measure decode latency and peak RAM.
-        bw = bandwidth.measure(sub_model, prompt, constants.DECODE_LENGTH)
+        # Decode measurement uses the short correctness prompt as context.
+        bw = bandwidth.measure(sub_model, correctness_tokens, constants.DECODE_LENGTH)
         decode_spt, peak_gb = _measure_latency_and_memory(
-            sub_model, prompt, constants.DECODE_LENGTH
+            sub_model, correctness_tokens, constants.DECODE_LENGTH
         )
         peak_bytes = int(peak_gb * (1024**3))
 
-        # Measure prefill latency.
-        prefill_spt = _measure_prefill_latency(sub_model, prefill_prompt)
+        # Prefill measurement: cost of filling the full 32k benchmark context.
+        prefill_spt = _measure_prefill_latency(sub_model, benchmark_tokens)
 
         sr = score.compute(
             peak_ram_bytes=peak_bytes,
@@ -432,24 +458,16 @@ def run(weights_path: Path, note: str, secret: str = "") -> RunReport:
         )
 
 
-def hashlib_sha256(s: str) -> int:
-    """SHA-256 of a string, returned as an int (truncated to 31 bits)."""
-    import hashlib
-
-    return int.from_bytes(hashlib.sha256(s.encode()).digest()[:4], "big")
-
-
 def main():
     parser = argparse.ArgumentParser(description="mlxfast harness")
     parser.add_argument("--weights", type=Path, default=constants.PARTICIPANT_WEIGHTS_DIR)
     parser.add_argument("--note", type=str, default="")
-    parser.add_argument("--secret", type=str, default="")
     parser.add_argument(
         "--output-tsv", type=Path, default=constants.RESULTS_FILE
     )
     args = parser.parse_args()
 
-    report = run(args.weights, args.note, args.secret)
+    report = run(args.weights, args.note)
 
     # Append to results.tsv.
     args.output_tsv.parent.mkdir(parents=True, exist_ok=True)

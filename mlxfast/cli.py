@@ -46,7 +46,6 @@ console = Console()
 @app.command()
 def run(
     note: str = typer.Option("", "--note", "-n", help="Free-form note recorded in results.tsv"),
-    secret: str = typer.Option("", "--secret", help="Server-supplied secret for prompt seed (default: local deterministic)"),
     skip_transform_verify: bool = typer.Option(False, "--skip-transform-verify", help="Skip the sandboxed transform.py re-run (faster, less safe)"),
     weights: Path = typer.Option(constants.PARTICIPANT_WEIGHTS_DIR, "--weights", "-w", help="Path to the participant's transformed weights"),
     score_path: Path = typer.Option(constants.SCORE_FILE, "--score-path", help="Path to write JSON score output"),
@@ -82,7 +81,6 @@ def run(
     report = _harness_runner.run_in_subprocess(
         weights_path=weights,
         note=note,
-        secret=secret,
     )
     elapsed = time.perf_counter() - t0
 

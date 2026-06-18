@@ -44,17 +44,24 @@ SCORE_FILE = Path("score.json")
 REFERENCE_WEIGHTS_DIR = Path("mlxfast/reference_weights")
 TOKENIZER_DIR = Path("mlxfast/tokenizer")
 
+# Prompt files (relative to participant's working directory).
+# Each has a local copy (committed to the repo) and a server copy
+# injected via env var by CI. Both copies tokenise to the same length
+# but have different content so hardcoded outputs fail server-side.
+CORRECTNESS_PROMPT_FILE = Path("prompts/correctness_local.txt")
+BENCHMARK_PROMPT_FILE = Path("prompts/benchmark_local.txt")
+ENV_CORRECTNESS_PROMPT = "MLXFAST_CORRECTNESS_PROMPT"
+ENV_BENCHMARK_PROMPT = "MLXFAST_BENCHMARK_PROMPT"
+
 # Measurement parameters.
-# DECODE_LENGTH: number of autoregressive tokens measured per run.
-# PREFILL_PROMPT_LENGTH: length of the prompt used for the prefill
-#   latency measurement. Longer than the correctness seed prompt so
-#   that prefill timing is dominated by the actual computation rather
-#   than framework overhead.
-# PROMPT_SEED_PREFIX_LENGTH: length of the seed prompt used for the
-#   correctness gate and as the starting context for decode timing.
+# DECODE_LENGTH: number of autoregressive tokens decoded per run.
+# CORRECTNESS_PROMPT_TOKENS: length of the short prompt used for the
+#   greedy-token correctness gate and as decode context.
+# BENCHMARK_PROMPT_TOKENS: length of the long prompt whose full-context
+#   prefill cost defines prefill_seconds_per_token.
 DECODE_LENGTH = 512
-PREFILL_PROMPT_LENGTH = 512
-PROMPT_SEED_PREFIX_LENGTH = 32
+CORRECTNESS_PROMPT_TOKENS = 64
+BENCHMARK_PROMPT_TOKENS = 32768
 
 # Numerical tolerance for the correctness gate. The spec calls for
 # bfloat16 numerical associativity — reordering of floating point

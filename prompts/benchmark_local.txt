@@ -1,0 +1,15 @@
+This file must be populated before running the harness.
+
+Run the following command from the repo root to generate it:
+
+  python scripts/make_prompts.py
+
+This requires the reference weights to be downloaded first:
+
+  mlxfast weights
+
+The script fetches ~32k tokens of public-domain prose from Project
+Gutenberg and writes them here. The file is not committed to the repo
+because (a) it is large (~130 KB) and (b) the server uses a different
+prompt of the same length, so including the local copy adds no security
+value for participants.
