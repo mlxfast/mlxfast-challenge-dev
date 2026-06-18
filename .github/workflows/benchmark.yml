@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   benchmark:
-    runs-on: blacksmith-12vcpu-macos-15
+    runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
