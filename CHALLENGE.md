@@ -89,9 +89,12 @@ and generated/model artifact paths, skips macOS metadata files, and applies a
 
 Use `mlxfast-swift submit --dry-run --output mlxfast-submission.zip` for local
 inspection. For Yukon upload, run `mlxfast-swift login <api-key> --api <url>`
-once, then `mlxfast-swift submit <benchmark-id-or-name> --note "..."`. Uploads
-are sent as a gzip tar archive with bearer-token auth; the backend applies the
-archive to the frozen benchmark checkout and runs hidden validation.
+once, then `mlxfast-swift link <benchmark-id-or-name>` for an existing checkout
+or `mlxfast-swift clone <benchmark-id-or-name>` for a fresh checkout. Upload
+with `mlxfast-swift submit <benchmark-id-or-name> --note "..."`. Uploads are
+sent as a gzip tar archive with bearer-token auth; the backend applies the
+archive to the frozen benchmark checkout and runs hidden validation. Use
+`mlxfast-swift submissions <benchmark-id-or-name>` to inspect submitted jobs.
 
 `mlxfast-swift verify-transform` is an organizer/debug check for deterministic
 transform output. It re-runs the submitted transform and compares the generated
@@ -139,6 +142,9 @@ Lower is better.
 `bandwidth_GB_per_token` is measured with `mactop` hardware DRAM counters during
 the decode window. `setup.sh` installs `mactop` with Homebrew when needed; set
 `MLXFAST_MACTOP_BIN=/path/to/mactop` to use a local binary instead.
+`score.json` also carries audit-only wall-clock phase timings, final process RSS,
+expert streaming counters, and transformed-weights digest fields. These values
+help operators review runs but do not change the score formula.
 
 ## Useful Commands
 
@@ -153,5 +159,7 @@ swift build -c release
 .build/release/mlxfast-swift make-golden --prompt-file private_prompts.json --output correctness_golden.json
 .build/release/mlxfast-swift verify-transform
 .build/release/mlxfast-swift clone
+.build/release/mlxfast-swift link <benchmark-id-or-name>
 .build/release/mlxfast-swift submit --dry-run --output mlxfast-submission.zip
+.build/release/mlxfast-swift submissions <benchmark-id-or-name>
 ```

@@ -21,7 +21,7 @@ See [CHALLENGE.md](CHALLENGE.md) for the full problem statement, scoring formula
 # Or call the Swift CLI directly
 .build/release/mlxfast-swift preflight
 .build/release/mlxfast-swift benchmark --score-path score.json
-.build/release/mlxfast-swift submit --output mlxfast-submission.zip
+.build/release/mlxfast-swift submit --dry-run --output mlxfast-submission.zip
 
 # If required model artifacts are missing, the benchmark emits a valid failed
 # score.json instead of a ranked score.
@@ -89,15 +89,20 @@ For Yukon upload, first store an API key:
 
 ```bash
 .build/release/mlxfast-swift login <api-key> --api https://yukon-api.fly.dev
+.build/release/mlxfast-swift link <benchmark-id-or-name>
 .build/release/mlxfast-swift submit <benchmark-id-or-name> \
   --note "Changed expert streaming prefetch policy."
+.build/release/mlxfast-swift submissions <benchmark-id-or-name>
 ```
 
 The upload path packages the same editable paths as `submission.tar.gz` and
 POSTs it to Yukon with `Authorization: Bearer <api-key>` and an idempotency key.
 `YUKON_API_URL`, `YUKON_API_TOKEN`, `MLXFAST_API_URL`, `MLXFAST_API_KEY`, and
 `MLXFAST_BENCHMARK_REF` can be used in CI or scripted runs. Use `--dry-run` to
-force local packaging even when credentials are configured.
+force local packaging even when credentials are configured. `mlxfast-swift clone
+<benchmark>` fetches the benchmark source repository from Yukon metadata and
+writes local `yukon.*` git config; `mlxfast-swift link <benchmark>` writes the
+same config into an existing checkout.
 
 ## Scoring
 
@@ -107,6 +112,10 @@ score = peak_ram_GB × bandwidth_GB_per_token × decode_sec_per_token × prefill
 
 Bandwidth is measured via **mactop hardware DRAM counters** — not a software model.
 Correctness is a hard gate. See CHALLENGE.md for the full correctness specification.
+The score payload also includes audit-only fields for wall-clock benchmark time,
+preflight time, correctness time, timed benchmark time, final process RSS, expert
+streaming counters, and transformed-weights digest. These fields are for
+operator review and are not additional scoring factors.
 
 **Baseline (TBD — reference M5 Max 128 GB):**
 

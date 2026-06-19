@@ -410,6 +410,83 @@ func yukonClientSubmitsMultipartArchiveWhenNoteIsProvided() throws {
     #expect(response.submission.status == "received")
 }
 
+@Test
+func yukonClientFetchesBenchmarkMetadata() throws {
+    var sawRequest = false
+    let client = try YukonClient(apiBaseURL: "https://yukon.example.test", apiKey: "secret") { request in
+        sawRequest = true
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://yukon.example.test/api/benchmarks/deepseek%2Fflash")
+        #expect(request.value(forHTTPHeaderField: "authorization") == "Bearer secret")
+        return try httpResponse(
+            for: request,
+            statusCode: 200,
+            body: benchmarkResponseJSON
+        )
+    }
+
+    let response = try client.getBenchmark("deepseek/flash")
+
+    #expect(sawRequest)
+    #expect(response.benchmark.id == "bench-1")
+    #expect(response.benchmark.name == "DeepSeek V4 Flash")
+    #expect(response.benchmark.sourceURL == "https://github.com/Layr-Labs/mlxfast-challenge-dev.git")
+    #expect(response.benchmark.sourceRef == "abc123")
+    #expect(response.benchmark.scorePath == "score.json")
+    #expect(response.benchmark.setupCommand == ["bash", "-lc", "./setup.sh"])
+}
+
+@Test
+func yukonClientListsBenchmarkSubmissions() throws {
+    var sawRequest = false
+    let client = try YukonClient(apiBaseURL: "https://yukon.example.test", apiKey: "secret") { request in
+        sawRequest = true
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://yukon.example.test/api/benchmarks/bench-1/submissions")
+        return try httpResponse(
+            for: request,
+            statusCode: 200,
+            body: submissionListResponseJSON
+        )
+    }
+
+    let response = try client.listBenchmarkSubmissions("bench-1")
+
+    #expect(sawRequest)
+    #expect(response.submissions.count == 1)
+    #expect(response.submissions[0].id == "sub-1")
+    #expect(response.submissions[0].officialScore == 0.42)
+    #expect(response.submissions[0].improved == true)
+}
+
+@Test
+func yukonAPIErrorDecodesStructuredErrorMessage() throws {
+    let client = try YukonClient(apiBaseURL: "https://yukon.example.test", apiKey: "bad") { request in
+        try httpResponse(
+            for: request,
+            statusCode: 401,
+            body: """
+            {
+              "error": {
+                "code": "unauthorized",
+                "message": "invalid api key"
+              }
+            }
+            """
+        )
+    }
+
+    do {
+        _ = try client.me()
+        Issue.record("expected Yukon API error")
+    } catch let error as YukonAPIError {
+        #expect(error.statusCode == 401)
+        #expect(error.code == "unauthorized")
+        #expect(error.message == "invalid api key")
+        #expect(error.description == "Yukon API request failed with HTTP 401 [unauthorized]: invalid api key")
+    }
+}
+
 private func makeSubmissionWorkspace(editablePaths: [String]) throws -> URL {
     let root = try temporarySubmissionDirectory()
     let sources = root.appendingPathComponent("Sources", isDirectory: true)
@@ -435,6 +512,44 @@ private let submissionResponseJSON = """
     "id": "job-1",
     "status": "queued"
   }
+}
+"""
+
+private let benchmarkResponseJSON = """
+{
+  "benchmark": {
+    "id": "bench-1",
+    "name": "DeepSeek V4 Flash",
+    "status": "active",
+    "category": "swift",
+    "direction": "-",
+    "sourceUrl": "https://github.com/Layr-Labs/mlxfast-challenge-dev.git",
+    "sourceRef": "abc123",
+    "scorePath": "score.json",
+    "setupCommand": ["bash", "-lc", "./setup.sh"],
+    "benchmarkCommand": ["bash", "-lc", "./benchmark.sh"],
+    "currentBestScore": 0.5,
+    "baselineScore": 1.0,
+    "closesAt": "2026-07-01T00:00:00Z"
+  }
+}
+"""
+
+private let submissionListResponseJSON = """
+{
+  "submissions": [
+    {
+      "id": "sub-1",
+      "benchmarkId": "bench-1",
+      "status": "complete",
+      "note": "Changed expert streaming strategy",
+      "claimedScore": 0.5,
+      "officialScore": 0.42,
+      "improved": true,
+      "createdAt": "2026-06-18T00:00:00Z",
+      "updatedAt": "2026-06-18T00:01:00Z"
+    }
+  ]
 }
 """
 

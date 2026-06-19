@@ -18,6 +18,56 @@ public struct YukonSubmission: Decodable, Equatable {
     public let note: String?
     public let claimedScore: Double?
     public let officialScore: Double?
+    public let improved: Bool?
+    public let createdAt: String?
+    public let updatedAt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case benchmarkId
+        case status
+        case note
+        case claimedScore
+        case officialScore
+        case improved
+        case createdAt
+        case updatedAt
+    }
+
+    public init(
+        id: String,
+        benchmarkId: String = "",
+        status: String,
+        note: String? = nil,
+        claimedScore: Double? = nil,
+        officialScore: Double? = nil,
+        improved: Bool? = nil,
+        createdAt: String? = nil,
+        updatedAt: String? = nil
+    ) {
+        self.id = id
+        self.benchmarkId = benchmarkId
+        self.status = status
+        self.note = note
+        self.claimedScore = claimedScore
+        self.officialScore = officialScore
+        self.improved = improved
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.benchmarkId = try container.decodeIfPresent(String.self, forKey: .benchmarkId) ?? ""
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        self.note = try container.decodeIfPresent(String.self, forKey: .note)
+        self.claimedScore = try container.decodeIfPresent(Double.self, forKey: .claimedScore)
+        self.officialScore = try container.decodeIfPresent(Double.self, forKey: .officialScore)
+        self.improved = try container.decodeIfPresent(Bool.self, forKey: .improved)
+        self.createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        self.updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
 }
 
 public struct YukonJob: Decodable, Equatable {
@@ -28,6 +78,121 @@ public struct YukonJob: Decodable, Equatable {
 public struct YukonSubmissionResponse: Decodable, Equatable {
     public let submission: YukonSubmission
     public let job: YukonJob?
+}
+
+public struct YukonSubmissionListResponse: Decodable, Equatable {
+    public let submissions: [YukonSubmission]
+
+    private enum CodingKeys: String, CodingKey {
+        case submissions
+        case items
+        case data
+    }
+
+    public init(submissions: [YukonSubmission]) {
+        self.submissions = submissions
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            if let submissions = try container.decodeIfPresent([YukonSubmission].self, forKey: .submissions) {
+                self.submissions = submissions
+                return
+            }
+            if let submissions = try container.decodeIfPresent([YukonSubmission].self, forKey: .items) {
+                self.submissions = submissions
+                return
+            }
+            if let submissions = try container.decodeIfPresent([YukonSubmission].self, forKey: .data) {
+                self.submissions = submissions
+                return
+            }
+        }
+        self.submissions = try [YukonSubmission](from: decoder)
+    }
+}
+
+public struct YukonBenchmark: Decodable, Equatable {
+    public let id: String
+    public let name: String?
+    public let status: String?
+    public let category: String?
+    public let direction: String?
+    public let sourceURL: String?
+    public let sourceRef: String?
+    public let scorePath: String?
+    public let setupCommand: [String]?
+    public let benchmarkCommand: [String]?
+    public let currentBestScore: Double?
+    public let baselineScore: Double?
+    public let closesAt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case status
+        case category
+        case direction
+        case sourceURL = "sourceUrl"
+        case sourceRef
+        case scorePath
+        case setupCommand
+        case benchmarkCommand
+        case currentBestScore
+        case baselineScore
+        case closesAt
+    }
+
+    public init(
+        id: String,
+        name: String? = nil,
+        status: String? = nil,
+        category: String? = nil,
+        direction: String? = nil,
+        sourceURL: String? = nil,
+        sourceRef: String? = nil,
+        scorePath: String? = nil,
+        setupCommand: [String]? = nil,
+        benchmarkCommand: [String]? = nil,
+        currentBestScore: Double? = nil,
+        baselineScore: Double? = nil,
+        closesAt: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.status = status
+        self.category = category
+        self.direction = direction
+        self.sourceURL = sourceURL
+        self.sourceRef = sourceRef
+        self.scorePath = scorePath
+        self.setupCommand = setupCommand
+        self.benchmarkCommand = benchmarkCommand
+        self.currentBestScore = currentBestScore
+        self.baselineScore = baselineScore
+        self.closesAt = closesAt
+    }
+}
+
+public struct YukonBenchmarkResponse: Decodable, Equatable {
+    public let benchmark: YukonBenchmark
+
+    private enum CodingKeys: String, CodingKey {
+        case benchmark
+    }
+
+    public init(benchmark: YukonBenchmark) {
+        self.benchmark = benchmark
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self),
+           let benchmark = try container.decodeIfPresent(YukonBenchmark.self, forKey: .benchmark) {
+            self.benchmark = benchmark
+        } else {
+            self.benchmark = try YukonBenchmark(from: decoder)
+        }
+    }
 }
 
 public struct YukonSubmissionOptions: Equatable {
@@ -55,12 +220,43 @@ public struct YukonSubmissionOptions: Equatable {
 public struct YukonAPIError: Error, CustomStringConvertible, Equatable {
     public let statusCode: Int
     public let responseBody: String
+    public let code: String?
+    public let message: String?
+
+    public init(statusCode: Int, responseBody: String) {
+        self.statusCode = statusCode
+        self.responseBody = responseBody
+        let parsed = Self.parseErrorBody(responseBody)
+        self.code = parsed.code
+        self.message = parsed.message
+    }
 
     public var description: String {
+        if let message, !message.isEmpty {
+            if let code, !code.isEmpty {
+                return "Yukon API request failed with HTTP \(statusCode) [\(code)]: \(message)"
+            }
+            return "Yukon API request failed with HTTP \(statusCode): \(message)"
+        }
         if responseBody.isEmpty {
             return "Yukon API request failed with HTTP \(statusCode)"
         }
         return "Yukon API request failed with HTTP \(statusCode): \(responseBody)"
+    }
+
+    private static func parseErrorBody(_ body: String) -> (code: String?, message: String?) {
+        guard let data = body.data(using: .utf8), !data.isEmpty else {
+            return (nil, nil)
+        }
+        do {
+            let decoded = try JSONDecoder().decode(YukonErrorEnvelope.self, from: data)
+            return (
+                decoded.error?.code ?? decoded.code,
+                decoded.error?.message ?? decoded.message
+            )
+        } catch {
+            return (nil, nil)
+        }
     }
 }
 
@@ -100,6 +296,28 @@ public struct YukonClient {
         request.httpMethod = "GET"
         let (data, _) = try perform(request)
         return try JSONDecoder().decode(YukonMeResponse.self, from: data)
+    }
+
+    public func getBenchmark(_ benchmark: String) throws -> YukonBenchmarkResponse {
+        let benchmark = benchmark.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !benchmark.isEmpty else {
+            throw MLXFastError.invalidInput("benchmark id or name must not be empty")
+        }
+        var request = try authorizedRequest(path: "/api/benchmarks/\(urlPathEncode(benchmark))")
+        request.httpMethod = "GET"
+        let (data, _) = try perform(request)
+        return try JSONDecoder().decode(YukonBenchmarkResponse.self, from: data)
+    }
+
+    public func listBenchmarkSubmissions(_ benchmark: String) throws -> YukonSubmissionListResponse {
+        let benchmark = benchmark.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !benchmark.isEmpty else {
+            throw MLXFastError.invalidInput("benchmark id or name must not be empty")
+        }
+        var request = try authorizedRequest(path: "/api/benchmarks/\(urlPathEncode(benchmark))/submissions")
+        request.httpMethod = "GET"
+        let (data, _) = try perform(request)
+        return try JSONDecoder().decode(YukonSubmissionListResponse.self, from: data)
     }
 
     public func createSubmission(_ options: YukonSubmissionOptions) throws -> YukonSubmissionResponse {
@@ -222,6 +440,17 @@ private final class URLSessionResultBox: @unchecked Sendable {
         defer { lock.unlock() }
         return result
     }
+}
+
+private struct YukonErrorEnvelope: Decodable {
+    let error: YukonErrorDetails?
+    let code: String?
+    let message: String?
+}
+
+private struct YukonErrorDetails: Decodable {
+    let code: String?
+    let message: String?
 }
 
 private func normalizedNote(_ note: String?) throws -> String? {

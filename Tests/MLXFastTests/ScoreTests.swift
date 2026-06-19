@@ -32,6 +32,11 @@ func writeScorePayloadEmitsDarkbloomShape() throws {
     #expect(decoded.metrics.weightsHash == "")
     #expect(decoded.metrics.weightsByteCount == 0)
     #expect(decoded.metrics.weightsFileCount == 0)
+    #expect(decoded.metrics.benchmarkWallSeconds == 0)
+    #expect(decoded.metrics.preflightSeconds == 0)
+    #expect(decoded.metrics.correctnessSeconds == 0)
+    #expect(decoded.metrics.timedBenchmarkSeconds == 0)
+    #expect(decoded.metrics.processResidentMemoryGB == 0)
     #expect(decoded.metrics.firstFailingLayer == nil)
     #expect(decoded.metrics.firstFailingCase == nil)
     #expect(decoded.metrics.firstFailingStep == nil)
@@ -56,6 +61,11 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
                 bandwidthGBPerToken: 0,
                 decodeSecondsPerToken: 0,
                 prefillSecondsPerToken: 0,
+                benchmarkWallSeconds: 11,
+                preflightSeconds: 1,
+                correctnessSeconds: 2,
+                timedBenchmarkSeconds: 8,
+                processResidentMemoryGB: 3.5,
                 passedCorrectness: false,
                 numLayers: MLXFastConstants.numHiddenLayers,
                 checkedSteps: 13,
@@ -110,6 +120,11 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
     #expect(raw.contains("\"weights_hash\" : \"weights-hash\""))
     #expect(raw.contains("\"weights_byte_count\" : 4096"))
     #expect(raw.contains("\"weights_file_count\" : 7"))
+    #expect(raw.contains("\"benchmark_wall_seconds\" : 11"))
+    #expect(raw.contains("\"preflight_seconds\" : 1"))
+    #expect(raw.contains("\"correctness_seconds\" : 2"))
+    #expect(raw.contains("\"timed_benchmark_seconds\" : 8"))
+    #expect(raw.contains("\"process_resident_memory_gb\" : 3.5"))
     #expect(decoded.metrics.firstFailingLayer == nil)
     #expect(decoded.metrics.firstFailingCase == "case-b")
     #expect(decoded.metrics.firstFailingStep == 12)
@@ -128,6 +143,11 @@ func writeScorePayloadKeepsTokenStepSeparateFromLayerFailures() throws {
     #expect(decoded.metrics.weightsHash == "weights-hash")
     #expect(decoded.metrics.weightsByteCount == 4096)
     #expect(decoded.metrics.weightsFileCount == 7)
+    #expect(decoded.metrics.benchmarkWallSeconds == 11)
+    #expect(decoded.metrics.preflightSeconds == 1)
+    #expect(decoded.metrics.correctnessSeconds == 2)
+    #expect(decoded.metrics.timedBenchmarkSeconds == 8)
+    #expect(decoded.metrics.processResidentMemoryGB == 3.5)
 }
 
 @Test
@@ -174,6 +194,11 @@ func scoreMetricsDecodeOlderPayloadWithoutWeightsIntegrityFields() throws {
     #expect(decoded.metrics.weightsHash == "")
     #expect(decoded.metrics.weightsByteCount == 0)
     #expect(decoded.metrics.weightsFileCount == 0)
+    #expect(decoded.metrics.benchmarkWallSeconds == 0)
+    #expect(decoded.metrics.preflightSeconds == 0)
+    #expect(decoded.metrics.correctnessSeconds == 0)
+    #expect(decoded.metrics.timedBenchmarkSeconds == 0)
+    #expect(decoded.metrics.processResidentMemoryGB == 0)
 }
 
 private func temporaryDirectory() throws -> URL {

@@ -49,8 +49,14 @@ private enum MLXFastCLI {
             case "clone":
                 try runClone(options)
                 return 0
+            case "link":
+                try runLink(options)
+                return 0
             case "submit":
                 try runSubmit(options)
+                return 0
+            case "submissions":
+                try runSubmissions(options)
                 return 0
             default:
                 fputs("mlxfast-swift: unknown command '\(command)'\n\n", stderr)
@@ -334,13 +340,75 @@ private enum MLXFastCLI {
     }
 
     private static func runClone(_ options: ParsedOptions) throws {
-        try options.validate(valueOptions: ["--contract"])
-        let contractPath = options.value(for: "--contract", default: "benchmark.json")
-        let contract = try SubmissionSupport.ensureWorkspace(contractPath: contractPath)
-        print("workspace: \(contract.name)")
-        print("editable paths:")
-        for path in contract.editablePaths {
-            print("  \(path)")
+        try options.validate(
+            valueOptions: ["--api", "--contract"],
+            allowPositionals: true
+        )
+        let positionals = options.positionalArguments()
+        guard positionals.count <= 2 else {
+            throw MLXFastError.invalidInput("clone accepts BENCHMARK and optional DIRECTORY")
+        }
+
+        if positionals.isEmpty {
+            let contractPath = options.value(for: "--contract", default: "benchmark.json")
+            let contract = try SubmissionSupport.ensureWorkspace(contractPath: contractPath)
+            print("workspace: \(contract.name)")
+            print("editable paths:")
+            for path in contract.editablePaths {
+                print("  \(path)")
+            }
+            return
+        }
+
+        guard !options.hasValue(for: "--contract") else {
+            throw MLXFastError.invalidInput("clone BENCHMARK does not use --contract")
+        }
+        let benchmarkRef = positionals[0]
+        let client = try authenticatedYukonClient(apiOverride: options.value(for: "--api", default: ""))
+        let response = try client.getBenchmark(benchmarkRef)
+        let benchmark = response.benchmark
+        let sourceURL = try requiredBenchmarkSourceURL(benchmark)
+        let destinationPath = positionals.count == 2
+            ? positionals[1]
+            : defaultCloneDirectory(for: benchmark)
+
+        _ = try runProcess("/usr/bin/git", arguments: ["clone", sourceURL, destinationPath])
+        if let sourceRef = trimmedNonEmpty(benchmark.sourceRef) {
+            _ = try runProcess("/usr/bin/git", arguments: ["-C", destinationPath, "checkout", sourceRef])
+        }
+        try writeYukonGitConfig(benchmark: benchmark, fallbackRef: benchmarkRef, repositoryPath: destinationPath)
+        print("cloned: \(destinationPath)")
+        print("benchmark: \(benchmark.id)")
+    }
+
+    private static func runLink(_ options: ParsedOptions) throws {
+        try options.validate(
+            valueOptions: ["--api", "--benchmark"],
+            allowPositionals: true
+        )
+        let positionals = options.positionalArguments()
+        guard positionals.count <= 1 else {
+            throw MLXFastError.invalidInput("link accepts at most one positional benchmark")
+        }
+        guard !(options.hasValue(for: "--benchmark") && !positionals.isEmpty) else {
+            throw MLXFastError.invalidInput("link accepts either --benchmark ID or positional benchmark, not both")
+        }
+        let benchmarkRef = try resolveBenchmarkRef(
+            explicit: options.value(for: "--benchmark", default: positionals.first ?? "")
+        )
+        let client = try authenticatedYukonClient(apiOverride: options.value(for: "--api", default: ""))
+        let response = try client.getBenchmark(benchmarkRef)
+        try writeYukonGitConfig(
+            benchmark: response.benchmark,
+            fallbackRef: benchmarkRef,
+            repositoryPath: FileManager.default.currentDirectoryPath
+        )
+        print("linked benchmark: \(response.benchmark.id)")
+        if let sourceURL = trimmedNonEmpty(response.benchmark.sourceURL) {
+            print("source: \(sourceURL)")
+        }
+        if let sourceRef = trimmedNonEmpty(response.benchmark.sourceRef) {
+            print("source_ref: \(sourceRef)")
         }
     }
 
@@ -404,7 +472,7 @@ private enum MLXFastCLI {
                     default: positionalBenchmarks.first ?? ""
                 )
             )
-            let note = try submissionNote(from: options)
+            let note = try requiredSubmissionNote(from: options)
             let claimedScore = try parseOptionalDouble(options.value(for: "--claimed-score", default: ""))
             let apiBaseURL = try options.value(
                 for: "--api",
@@ -453,6 +521,39 @@ private enum MLXFastCLI {
         }
     }
 
+    private static func runSubmissions(_ options: ParsedOptions) throws {
+        try options.validate(
+            valueOptions: ["--api", "--benchmark"],
+            allowPositionals: true
+        )
+        let positionals = options.positionalArguments()
+        guard positionals.count <= 1 else {
+            throw MLXFastError.invalidInput("submissions accepts at most one positional benchmark")
+        }
+        guard !(options.hasValue(for: "--benchmark") && !positionals.isEmpty) else {
+            throw MLXFastError.invalidInput("submissions accepts either --benchmark ID or positional benchmark, not both")
+        }
+        let benchmarkRef = try resolveBenchmarkRef(
+            explicit: options.value(for: "--benchmark", default: positionals.first ?? "")
+        )
+        let client = try authenticatedYukonClient(apiOverride: options.value(for: "--api", default: ""))
+        let response = try client.listBenchmarkSubmissions(benchmarkRef)
+        if response.submissions.isEmpty {
+            print("no submissions")
+            return
+        }
+        for submission in response.submissions {
+            let officialScore = formatOptionalScore(submission.officialScore)
+            let claimedScore = formatOptionalScore(submission.claimedScore)
+            let improved = submission.improved.map { $0 ? "true" : "false" } ?? "-"
+            let note = trimmedNonEmpty(submission.note)
+                .map { " note=\"\(truncate($0, limit: 80))\"" } ?? ""
+            print(
+                "\(submission.id) status=\(submission.status) official=\(officialScore) claimed=\(claimedScore) improved=\(improved)\(note)"
+            )
+        }
+    }
+
     private static func printUsage() {
         print(
             """
@@ -466,8 +567,10 @@ private enum MLXFastCLI {
               mlxfast-swift checkpoint-shards --index PATH
               mlxfast-swift login [--api-key KEY | KEY] [--api URL] [--no-verify]
               mlxfast-swift config
-              mlxfast-swift clone [--contract benchmark.json]
+              mlxfast-swift clone [BENCHMARK [DIRECTORY]] [--api URL]
+              mlxfast-swift link [BENCHMARK] [--benchmark ID] [--api URL]
               mlxfast-swift submit [BENCHMARK] [--benchmark ID] [--contract benchmark.json] [--output mlxfast-submission.zip] [--max-bytes N] [--note TEXT | --note-file PATH] [--claimed-score N] [--dry-run]
+              mlxfast-swift submissions [BENCHMARK] [--benchmark ID] [--api URL]
 
             Swift-only DeepSeek V4 Flash harness entrypoint.
             """
@@ -519,6 +622,26 @@ private enum MLXFastCLI {
         }
     }
 
+    private static func authenticatedYukonClient(apiOverride: String) throws -> YukonClient {
+        let credentials = try loadOptionalCredentials()
+        guard let apiKey = SubmissionSupport.configuredAPIKey(credentials: credentials) else {
+            throw MLXFastError.invalidInput(
+                "Yukon command requires login first; run mlxfast-swift login KEY or set MLXFAST_API_KEY"
+            )
+        }
+        let trimmedAPIOverride = apiOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiBaseURL: String
+        if trimmedAPIOverride.isEmpty {
+            apiBaseURL = try SubmissionSupport.configuredAPIBaseURL(credentials: credentials)
+        } else {
+            apiBaseURL = try SubmissionSupport.configuredAPIBaseURL(
+                credentials: credentials,
+                environment: ["MLXFAST_API_URL": trimmedAPIOverride]
+            )
+        }
+        return try YukonClient(apiBaseURL: apiBaseURL, apiKey: apiKey)
+    }
+
     private static func resolveBenchmarkRef(explicit: String) throws -> String {
         let explicit = explicit.trimmingCharacters(in: .whitespacesAndNewlines)
         if !explicit.isEmpty {
@@ -534,7 +657,7 @@ private enum MLXFastCLI {
             return value
         }
         throw MLXFastError.invalidInput(
-            "submit upload requires a benchmark id; pass BENCHMARK, --benchmark ID, or set MLXFAST_BENCHMARK_REF"
+            "benchmark id is required; pass BENCHMARK, --benchmark ID, or set MLXFAST_BENCHMARK_REF"
         )
     }
 
@@ -553,6 +676,13 @@ private enum MLXFastCLI {
             return try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
         }
         return nil
+    }
+
+    private static func requiredSubmissionNote(from options: ParsedOptions) throws -> String {
+        guard let note = try submissionNote(from: options).flatMap(trimmedNonEmpty) else {
+            throw MLXFastError.invalidInput("submit upload requires --note TEXT or --note-file PATH")
+        }
+        return note
     }
 
     private static func nonEmptyEnvironmentValue(_ name: String) -> String? {
@@ -581,6 +711,118 @@ private enum MLXFastCLI {
             encoding: .utf8
         )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
+    }
+
+    private static func writeYukonGitConfig(
+        benchmark: YukonBenchmark,
+        fallbackRef: String,
+        repositoryPath: String
+    ) throws {
+        let repositoryPath = URL(fileURLWithPath: repositoryPath).standardizedFileURL.path
+        let benchmarkId = trimmedNonEmpty(benchmark.id) ?? fallbackRef
+        try setGitConfig("yukon.benchmark-id", value: benchmarkId, repositoryPath: repositoryPath)
+        if let name = trimmedNonEmpty(benchmark.name) {
+            try setGitConfig("yukon.benchmark-name", value: name, repositoryPath: repositoryPath)
+        }
+        if let sourceURL = trimmedNonEmpty(benchmark.sourceURL) {
+            try setGitConfig("yukon.source-url", value: sourceURL, repositoryPath: repositoryPath)
+        }
+        if let sourceRef = trimmedNonEmpty(benchmark.sourceRef) {
+            try setGitConfig("yukon.source-ref", value: sourceRef, repositoryPath: repositoryPath)
+        }
+    }
+
+    private static func setGitConfig(_ key: String, value: String, repositoryPath: String) throws {
+        _ = try runProcess("/usr/bin/git", arguments: ["-C", repositoryPath, "config", key, value])
+    }
+
+    private static func requiredBenchmarkSourceURL(_ benchmark: YukonBenchmark) throws -> String {
+        guard let sourceURL = trimmedNonEmpty(benchmark.sourceURL) else {
+            throw MLXFastError.invalidInput("Yukon benchmark \(benchmark.id) does not include sourceUrl")
+        }
+        return sourceURL
+    }
+
+    private static func defaultCloneDirectory(for benchmark: YukonBenchmark) -> String {
+        let rawName = trimmedNonEmpty(benchmark.name)
+            ?? trimmedNonEmpty(benchmark.sourceURL).flatMap(repositoryName(from:))
+            ?? benchmark.id
+        return sanitizePathComponent(rawName)
+    }
+
+    private static func repositoryName(from sourceURL: String) -> String? {
+        guard let last = sourceURL.split(separator: "/").last else {
+            return nil
+        }
+        let name = String(last)
+        if name.hasSuffix(".git") {
+            return String(name.dropLast(4))
+        }
+        return name
+    }
+
+    private static func sanitizePathComponent(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = ""
+        for scalar in trimmed.unicodeScalars {
+            let character = Character(scalar)
+            if CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_" || scalar == "." {
+                result.append(character)
+            } else {
+                result.append("-")
+            }
+        }
+        let collapsed = result.split(separator: "-").joined(separator: "-")
+        return collapsed.isEmpty ? "mlxfast-benchmark" : collapsed
+    }
+
+    private static func formatOptionalScore(_ value: Double?) -> String {
+        guard let value else {
+            return "-"
+        }
+        return String(format: "%.6g", value)
+    }
+
+    private static func truncate(_ value: String, limit: Int) -> String {
+        guard value.count > limit else {
+            return value
+        }
+        let index = value.index(value.startIndex, offsetBy: limit)
+        return String(value[..<index]) + "..."
+    }
+
+    private static func trimmedNonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    @discardableResult
+    private static func runProcess(
+        _ executable: String,
+        arguments: [String]
+    ) throws -> String {
+        let process = Process()
+        let output = Pipe()
+        let errorPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = output
+        process.standardError = errorPipe
+        try process.run()
+        process.waitUntilExit()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdout = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard process.terminationStatus == 0 else {
+            let stderr = String(data: stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let detail = stderr.isEmpty ? stdout : stderr
+            throw MLXFastError.invalidInput(
+                "\(URL(fileURLWithPath: executable).lastPathComponent) failed with status \(process.terminationStatus): \(detail)"
+            )
+        }
+        return stdout
     }
 
     private static func parseTokenList(_ raw: String) throws -> [Int] {

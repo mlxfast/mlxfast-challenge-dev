@@ -1,5 +1,6 @@
-import Foundation
 import CryptoKit
+import Darwin
+import Foundation
 import MLX
 import MLXFastCore
 
@@ -234,14 +235,50 @@ public enum DeepSeekRuntime {
     }
 
     public static func benchmark(_ options: BenchmarkOptions) -> ScorePayload {
+        let benchmarkStart = DispatchTime.now().uptimeNanoseconds
         var correctnessReport: CorrectnessReport?
         var benchmarkLoader: DeepSeekWeightLoader?
         var transformedWeightsDigest: DirectoryDigest?
+        var preflightSeconds = 0.0
+        var correctnessSeconds = 0.0
+        var timedBenchmarkSeconds = 0.0
+
+        func makeFailedScore(
+            error: String,
+            correctness: CorrectnessReport?,
+            passedCorrectness: Bool,
+            expertStats explicitExpertStats: ExpertStreamingStats? = nil,
+            firstFailingCase explicitFirstFailingCase: String? = nil,
+            firstFailingStep explicitFirstFailingStep: Int? = nil,
+            expectedToken explicitExpectedToken: Int? = nil,
+            actualToken explicitActualToken: Int? = nil,
+            weightsDigest: DirectoryDigest? = nil
+        ) -> ScorePayload {
+            failedScore(
+                error: error,
+                correctness: correctness,
+                passedCorrectness: passedCorrectness,
+                expertStats: explicitExpertStats,
+                firstFailingCase: explicitFirstFailingCase,
+                firstFailingStep: explicitFirstFailingStep,
+                expectedToken: explicitExpectedToken,
+                actualToken: explicitActualToken,
+                weightsDigest: weightsDigest,
+                benchmarkWallSeconds: secondsSince(benchmarkStart),
+                preflightSeconds: preflightSeconds,
+                correctnessSeconds: correctnessSeconds,
+                timedBenchmarkSeconds: timedBenchmarkSeconds,
+                processResidentMemoryGB: currentResidentMemoryGB()
+            )
+        }
+
         do {
+            let preflightStart = DispatchTime.now().uptimeNanoseconds
             _ = try BenchmarkPreflight.check(
                 weightsPath: options.weightsPath,
                 goldenPath: options.goldenPath
             )
+            preflightSeconds = secondsSince(preflightStart)
             transformedWeightsDigest = try directoryDigest(
                 rootPath: options.weightsPath,
                 ignoredRelativePaths: [".benchmark-source.sha256", ".gitkeep"]
@@ -253,14 +290,16 @@ public enum DeepSeekRuntime {
                 expertStreamingConfig: ExpertStreamingConfig.fromEnvironment(recordsMetricsDefault: true)
             )
             let correctnessCache = DeepSeekRuntimeWeightCache(loader: correctnessLoader, config: config)
+            let correctnessStart = DispatchTime.now().uptimeNanoseconds
             let correctness = runCorrectness(
                 cases: golden.cases,
                 weightCache: correctnessCache,
                 goldenHash: golden.sha256
             )
+            correctnessSeconds = secondsSince(correctnessStart)
             correctnessReport = correctness
             guard correctness.passed else {
-                return failedScore(
+                return makeFailedScore(
                     error: correctness.error.isEmpty ? "correctness gate failed" : correctness.error,
                     correctness: correctness,
                     passedCorrectness: false,
@@ -285,6 +324,7 @@ public enum DeepSeekRuntime {
             let idleGBPerSecond = idleSamples.reduce(0, +) / Double(idleSamples.count)
 
             Memory.peakMemory = 0
+            let timedBenchmarkStart = DispatchTime.now().uptimeNanoseconds
             let prefillSecondsPerToken = try measurePrefillSecondsPerToken(
                 promptTokens: promptPlan.prefillTokens,
                 expectedToken: promptPlan.expectedPrefillToken,
@@ -297,6 +337,7 @@ public enum DeepSeekRuntime {
                 weightCache: benchmarkCache,
                 idleGBPerSecond: idleGBPerSecond
             )
+            timedBenchmarkSeconds = secondsSince(timedBenchmarkStart)
             let peakRamGB = Double(Memory.peakMemory) / Double(1 << 30)
             let score = peakRamGB
                 * decode.bandwidthGBPerToken
@@ -305,7 +346,7 @@ public enum DeepSeekRuntime {
             let expertStats = expertStats(from: runtimeBenchmarkLoader)
 
             guard score.isFinite, score >= 0 else {
-                return failedScore(
+                return makeFailedScore(
                     error: "computed score was not finite",
                     correctness: correctnessReport,
                     passedCorrectness: true,
@@ -322,6 +363,11 @@ public enum DeepSeekRuntime {
                     bandwidthGBPerToken: decode.bandwidthGBPerToken,
                     decodeSecondsPerToken: decode.secondsPerToken,
                     prefillSecondsPerToken: prefillSecondsPerToken,
+                    benchmarkWallSeconds: secondsSince(benchmarkStart),
+                    preflightSeconds: preflightSeconds,
+                    correctnessSeconds: correctnessSeconds,
+                    timedBenchmarkSeconds: timedBenchmarkSeconds,
+                    processResidentMemoryGB: currentResidentMemoryGB(),
                     passedCorrectness: true,
                     numLayers: config.numHiddenLayers,
                     checkedSteps: correctness.checkedSteps,
@@ -352,7 +398,7 @@ public enum DeepSeekRuntime {
                 )
             )
         } catch let mismatch as BenchmarkTokenMismatchError {
-            return failedScore(
+            return makeFailedScore(
                 error: mismatch.description,
                 correctness: correctnessReport,
                 passedCorrectness: correctnessReport?.passed == true,
@@ -364,7 +410,7 @@ public enum DeepSeekRuntime {
                 weightsDigest: transformedWeightsDigest
             )
         } catch {
-            return failedScore(
+            return makeFailedScore(
                 error: "\(error)",
                 correctness: correctnessReport,
                 passedCorrectness: correctnessReport?.passed == true,
@@ -602,7 +648,12 @@ public enum DeepSeekRuntime {
         firstFailingStep explicitFirstFailingStep: Int? = nil,
         expectedToken explicitExpectedToken: Int? = nil,
         actualToken explicitActualToken: Int? = nil,
-        weightsDigest: DirectoryDigest? = nil
+        weightsDigest: DirectoryDigest? = nil,
+        benchmarkWallSeconds: Double = 0,
+        preflightSeconds: Double = 0,
+        correctnessSeconds: Double = 0,
+        timedBenchmarkSeconds: Double = 0,
+        processResidentMemoryGB: Double = 0
     ) -> ScorePayload {
         let expertStats = explicitExpertStats ?? correctness?.expertStreamingStats ?? .zero
         return ScorePayload(
@@ -613,6 +664,11 @@ public enum DeepSeekRuntime {
                 bandwidthGBPerToken: 0,
                 decodeSecondsPerToken: 0,
                 prefillSecondsPerToken: 0,
+                benchmarkWallSeconds: benchmarkWallSeconds,
+                preflightSeconds: preflightSeconds,
+                correctnessSeconds: correctnessSeconds,
+                timedBenchmarkSeconds: timedBenchmarkSeconds,
+                processResidentMemoryGB: processResidentMemoryGB,
                 passedCorrectness: passedCorrectness,
                 numLayers: MLXFastConstants.numHiddenLayers,
                 checkedSteps: correctness?.checkedSteps ?? 0,
@@ -642,6 +698,25 @@ public enum DeepSeekRuntime {
                 runtime: "swift"
             )
         )
+    }
+
+    private static func currentResidentMemoryGB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.stride / MemoryLayout<integer_t>.stride)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                task_info(
+                    mach_task_self_,
+                    task_flavor_t(MACH_TASK_BASIC_INFO),
+                    rebound,
+                    &count
+                )
+            }
+        }
+        guard result == KERN_SUCCESS else {
+            return 0
+        }
+        return Double(info.resident_size) / Double(1 << 30)
     }
 
     private static func secondsSince(_ start: UInt64) -> Double {

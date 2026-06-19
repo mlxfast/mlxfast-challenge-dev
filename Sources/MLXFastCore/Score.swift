@@ -41,6 +41,11 @@ public struct ScoreMetrics: Codable, Equatable {
     public let bandwidthGBPerToken: Double
     public let decodeSecondsPerToken: Double
     public let prefillSecondsPerToken: Double
+    public let benchmarkWallSeconds: Double
+    public let preflightSeconds: Double
+    public let correctnessSeconds: Double
+    public let timedBenchmarkSeconds: Double
+    public let processResidentMemoryGB: Double
     public let passedCorrectness: Bool
     public let numLayers: Int
     public let checkedSteps: Int
@@ -74,6 +79,11 @@ public struct ScoreMetrics: Codable, Equatable {
         case bandwidthGBPerToken = "bandwidth_gb_per_token"
         case decodeSecondsPerToken = "decode_seconds_per_token"
         case prefillSecondsPerToken = "prefill_seconds_per_token"
+        case benchmarkWallSeconds = "benchmark_wall_seconds"
+        case preflightSeconds = "preflight_seconds"
+        case correctnessSeconds = "correctness_seconds"
+        case timedBenchmarkSeconds = "timed_benchmark_seconds"
+        case processResidentMemoryGB = "process_resident_memory_gb"
         case passedCorrectness = "passed_correctness"
         case numLayers = "num_layers"
         case checkedSteps = "checked_steps"
@@ -108,6 +118,11 @@ public struct ScoreMetrics: Codable, Equatable {
         bandwidthGBPerToken: Double,
         decodeSecondsPerToken: Double,
         prefillSecondsPerToken: Double,
+        benchmarkWallSeconds: Double = 0,
+        preflightSeconds: Double = 0,
+        correctnessSeconds: Double = 0,
+        timedBenchmarkSeconds: Double = 0,
+        processResidentMemoryGB: Double = 0,
         passedCorrectness: Bool,
         numLayers: Int,
         checkedSteps: Int,
@@ -140,6 +155,11 @@ public struct ScoreMetrics: Codable, Equatable {
         self.bandwidthGBPerToken = bandwidthGBPerToken
         self.decodeSecondsPerToken = decodeSecondsPerToken
         self.prefillSecondsPerToken = prefillSecondsPerToken
+        self.benchmarkWallSeconds = benchmarkWallSeconds
+        self.preflightSeconds = preflightSeconds
+        self.correctnessSeconds = correctnessSeconds
+        self.timedBenchmarkSeconds = timedBenchmarkSeconds
+        self.processResidentMemoryGB = processResidentMemoryGB
         self.passedCorrectness = passedCorrectness
         self.numLayers = numLayers
         self.checkedSteps = checkedSteps
@@ -175,6 +195,11 @@ public struct ScoreMetrics: Codable, Equatable {
         self.bandwidthGBPerToken = try container.decode(Double.self, forKey: .bandwidthGBPerToken)
         self.decodeSecondsPerToken = try container.decode(Double.self, forKey: .decodeSecondsPerToken)
         self.prefillSecondsPerToken = try container.decode(Double.self, forKey: .prefillSecondsPerToken)
+        self.benchmarkWallSeconds = try container.decodeIfPresent(Double.self, forKey: .benchmarkWallSeconds) ?? 0
+        self.preflightSeconds = try container.decodeIfPresent(Double.self, forKey: .preflightSeconds) ?? 0
+        self.correctnessSeconds = try container.decodeIfPresent(Double.self, forKey: .correctnessSeconds) ?? 0
+        self.timedBenchmarkSeconds = try container.decodeIfPresent(Double.self, forKey: .timedBenchmarkSeconds) ?? 0
+        self.processResidentMemoryGB = try container.decodeIfPresent(Double.self, forKey: .processResidentMemoryGB) ?? 0
         self.passedCorrectness = try container.decode(Bool.self, forKey: .passedCorrectness)
         self.numLayers = try container.decode(Int.self, forKey: .numLayers)
         self.checkedSteps = try container.decode(Int.self, forKey: .checkedSteps)
@@ -210,6 +235,11 @@ public struct ScoreMetrics: Codable, Equatable {
         try container.encode(bandwidthGBPerToken, forKey: .bandwidthGBPerToken)
         try container.encode(decodeSecondsPerToken, forKey: .decodeSecondsPerToken)
         try container.encode(prefillSecondsPerToken, forKey: .prefillSecondsPerToken)
+        try container.encode(benchmarkWallSeconds, forKey: .benchmarkWallSeconds)
+        try container.encode(preflightSeconds, forKey: .preflightSeconds)
+        try container.encode(correctnessSeconds, forKey: .correctnessSeconds)
+        try container.encode(timedBenchmarkSeconds, forKey: .timedBenchmarkSeconds)
+        try container.encode(processResidentMemoryGB, forKey: .processResidentMemoryGB)
         try container.encode(passedCorrectness, forKey: .passedCorrectness)
         try container.encode(numLayers, forKey: .numLayers)
         try container.encode(checkedSteps, forKey: .checkedSteps)
