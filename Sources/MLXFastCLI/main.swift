@@ -419,6 +419,7 @@ private enum MLXFastCLI {
                 "--benchmark",
                 "--claimed-score",
                 "--contract",
+                "--idempotency-key",
                 "--max-bytes",
                 "--note",
                 "--note-file",
@@ -474,37 +475,27 @@ private enum MLXFastCLI {
             )
             let note = try requiredSubmissionNote(from: options)
             let claimedScore = try parseOptionalDouble(options.value(for: "--claimed-score", default: ""))
-            let apiBaseURL = try options.value(
-                for: "--api",
-                default: SubmissionSupport.configuredAPIBaseURL(credentials: credentials)
-            )
-            let temporaryURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mlxfast-submit-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: temporaryURL, withIntermediateDirectories: true)
-            defer {
-                try? FileManager.default.removeItem(at: temporaryURL)
-            }
-            let archiveURL = temporaryURL.appendingPathComponent("submission.tar.gz")
-            let report = try SubmissionSupport.packageEditablePathsTarGzip(
-                contractPath: contractPath,
-                outputPath: archiveURL.path,
-                maxByteCount: maxByteCount
-            )
-            let client = try YukonClient(apiBaseURL: apiBaseURL, apiKey: apiKey ?? "")
-            let response = try client.createSubmission(
-                YukonSubmissionOptions(
+            let idempotencyKey = options.value(for: "--idempotency-key", default: UUID().uuidString)
+            let client = try authenticatedYukonClient(apiOverride: options.value(for: "--api", default: ""))
+            let upload = try YukonSubmissionUploader.uploadEditablePaths(
+                YukonLiveSubmissionOptions(
+                    contractPath: contractPath,
                     benchmark: benchmark,
-                    archivePath: report.archivePath,
+                    maxByteCount: maxByteCount,
                     note: note,
-                    claimedScore: claimedScore
-                )
+                    claimedScore: claimedScore,
+                    idempotencyKey: idempotencyKey
+                ),
+                client: client
             )
-            print("submission: \(response.submission.id)")
-            print("status: \(response.submission.status)")
-            if let job = response.job {
+            print("submission: \(upload.response.submission.id)")
+            print("status: \(upload.response.submission.status)")
+            if let job = upload.response.job {
                 print("job: \(job.id)")
+                print("job_status: \(job.status)")
             }
-            print("archive_sha256: \(report.archiveSha256)")
+            print("idempotency_key: \(idempotencyKey)")
+            print("archive_sha256: \(upload.archive.archiveSha256)")
         } else {
             let outputPath = options.value(for: "--output", default: "mlxfast-submission.zip")
             let report = try SubmissionSupport.packageEditablePaths(
@@ -569,7 +560,7 @@ private enum MLXFastCLI {
               mlxfast-swift config
               mlxfast-swift clone [BENCHMARK [DIRECTORY]] [--api URL]
               mlxfast-swift link [BENCHMARK] [--benchmark ID] [--api URL]
-              mlxfast-swift submit [BENCHMARK] [--benchmark ID] [--contract benchmark.json] [--output mlxfast-submission.zip] [--max-bytes N] [--note TEXT | --note-file PATH] [--claimed-score N] [--dry-run]
+              mlxfast-swift submit [BENCHMARK] [--benchmark ID] [--contract benchmark.json] [--output mlxfast-submission.zip] [--max-bytes N] [--note TEXT | --note-file PATH] [--claimed-score N] [--idempotency-key KEY] [--dry-run]
               mlxfast-swift submissions [BENCHMARK] [--benchmark ID] [--api URL]
 
             Swift-only DeepSeek V4 Flash harness entrypoint.

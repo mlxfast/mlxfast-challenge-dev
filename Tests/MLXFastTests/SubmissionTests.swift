@@ -411,6 +411,55 @@ func yukonClientSubmitsMultipartArchiveWhenNoteIsProvided() throws {
 }
 
 @Test
+func yukonSubmissionUploaderPackagesAndPostsEditablePaths() throws {
+    let root = try makeSubmissionWorkspace(editablePaths: ["Sources"])
+    let sources = root.appendingPathComponent("Sources", isDirectory: true)
+    try "public enum LiveSubmit {}\n".write(
+        to: sources.appendingPathComponent("LiveSubmit.swift"),
+        atomically: true,
+        encoding: .utf8
+    )
+    var uploadedArchiveByteCount = 0
+    var uploadedArchivePath = ""
+    let client = try YukonClient(apiBaseURL: "https://yukon.example.test", apiKey: "secret") { request in
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.absoluteString == "https://yukon.example.test/api/benchmarks/bench-1/submissions")
+        #expect(request.value(forHTTPHeaderField: "authorization") == "Bearer secret")
+        #expect(request.value(forHTTPHeaderField: "idempotency-key") == "idem-live-1")
+        #expect(request.value(forHTTPHeaderField: "content-type")?.hasPrefix("multipart/form-data; boundary=") == true)
+        let body = try #require(request.httpBody)
+        uploadedArchiveByteCount = body.count
+        #expect(body.containsUTF8("name=\"archive\"; filename=\"submission.tar.gz\""))
+        #expect(body.containsUTF8("name=\"note\""))
+        #expect(body.containsUTF8("live submit path"))
+        return try httpResponse(
+            for: request,
+            statusCode: 202,
+            body: submissionResponseJSON
+        )
+    }
+
+    let report = try YukonSubmissionUploader.uploadEditablePaths(
+        YukonLiveSubmissionOptions(
+            contractPath: root.appendingPathComponent("benchmark.json").path,
+            benchmark: "bench-1",
+            maxByteCount: 1024,
+            note: "live submit path",
+            idempotencyKey: "idem-live-1"
+        ),
+        client: client
+    )
+    uploadedArchivePath = report.archive.archivePath
+
+    #expect(report.archive.fileCount == 1)
+    #expect(report.archive.byteCount == "public enum LiveSubmit {}\n".utf8.count)
+    #expect(report.archive.archiveSha256.count == 64)
+    #expect(uploadedArchiveByteCount > 0)
+    #expect(report.response.submission.id == "sub-1")
+    #expect(FileManager.default.fileExists(atPath: uploadedArchivePath) == false)
+}
+
+@Test
 func yukonClientFetchesBenchmarkMetadata() throws {
     var sawRequest = false
     let client = try YukonClient(apiBaseURL: "https://yukon.example.test", apiKey: "secret") { request in
@@ -582,6 +631,12 @@ private func writeSubmissionContract(_ path: URL, editablePaths: [String]) throw
     }
     """
     try json.write(to: path, atomically: true, encoding: .utf8)
+}
+
+private extension Data {
+    func containsUTF8(_ string: String) -> Bool {
+        range(of: Data(string.utf8)) != nil
+    }
 }
 
 private func temporarySubmissionDirectory() throws -> URL {

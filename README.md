@@ -102,7 +102,8 @@ POSTs it to Yukon with `Authorization: Bearer <api-key>` and an idempotency key.
 force local packaging even when credentials are configured. `mlxfast-swift clone
 <benchmark>` fetches the benchmark source repository from Yukon metadata and
 writes local `yukon.*` git config; `mlxfast-swift link <benchmark>` writes the
-same config into an existing checkout.
+same config into an existing checkout. Pass `--idempotency-key KEY` to make a
+live submit retry use a stable backend idempotency key.
 
 ## Scoring
 

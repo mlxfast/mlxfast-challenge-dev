@@ -95,6 +95,8 @@ with `mlxfast-swift submit <benchmark-id-or-name> --note "..."`. Uploads are
 sent as a gzip tar archive with bearer-token auth; the backend applies the
 archive to the frozen benchmark checkout and runs hidden validation. Use
 `mlxfast-swift submissions <benchmark-id-or-name>` to inspect submitted jobs.
+Pass `--idempotency-key KEY` when a live submit should be safely retried with a
+stable backend idempotency key.
 
 `mlxfast-swift verify-transform` is an organizer/debug check for deterministic
 transform output. It re-runs the submitted transform and compares the generated
