@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "MLXFastTransform", targets: ["MLXFastTransform"]),
         .library(name: "MLXFastHarness", targets: ["MLXFastHarness"]),
         .library(name: "MLXFastDeepSeek", targets: ["MLXFastDeepSeek"]),
+        .library(name: "MLXFastDeepSeekHarness", targets: ["MLXFastDeepSeekHarness"]),
         .library(name: "MLXFastSubmission", targets: ["MLXFastSubmission"]),
     ],
     dependencies: [
@@ -41,6 +42,14 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
             ]
         ),
+        .target(
+            name: "MLXFastDeepSeekHarness",
+            dependencies: [
+                "MLXFastCore",
+                "MLXFastDeepSeek",
+                .product(name: "MLX", package: "mlx-swift"),
+            ]
+        ),
         .executableTarget(
             name: "MLXFastCLI",
             dependencies: [
@@ -48,6 +57,7 @@ let package = Package(
                 "MLXFastTransform",
                 "MLXFastHarness",
                 "MLXFastDeepSeek",
+                "MLXFastDeepSeekHarness",
                 "MLXFastSubmission",
             ]
         ),
@@ -58,6 +68,7 @@ let package = Package(
                 "MLXFastTransform",
                 "MLXFastHarness",
                 "MLXFastDeepSeek",
+                "MLXFastDeepSeekHarness",
                 "MLXFastSubmission",
             ]
         ),

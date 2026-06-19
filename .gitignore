@@ -24,6 +24,7 @@ correctness_golden.json
 # IDE
 .vscode/
 .idea/
+.serena/
 *.swp
 *.swo
 .DS_Store

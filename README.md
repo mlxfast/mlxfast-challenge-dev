@@ -75,7 +75,10 @@ in scope. Submissions should focus on the Swift targets listed in
 | `Sources/MLXFastTransform/` | Offline weight transform from frozen reference safetensors into benchmark-ready `weights/`. |
 
 The repository is Swift-only: setup, transform, correctness, and benchmark all
-run through the Swift package.
+run through the Swift package. Correctness, scoring, timing, provenance, and
+submission packaging are trusted harness code outside `editablePaths`, matching
+the original Python harness split between editable model code and non-editable
+judge code.
 
 `mlxfast-swift submit --dry-run` reads `benchmark.json` and archives only the
 paths listed in `editablePaths`. Generated `weights/`, reference checkpoints,
@@ -132,7 +135,9 @@ Sources/
   MLXFastCore/               score.json, golden cases, shared contracts
   MLXFastHarness/            trusted benchmark/provenance helpers
   MLXFastTransform/          Swift offline weight transform
-  MLXFastDeepSeek/           DeepSeek V4 Flash Swift runtime
+  MLXFastDeepSeek/           editable DeepSeek V4 Flash Swift runtime
+  MLXFastDeepSeekHarness/    trusted correctness, golden, and benchmark runner
+  MLXFastSubmission/         trusted Yukon login/submit integration
 weights/                     transformed weights (harness loads from here)
   experts/
     manifest.json            baseline byte ranges for streamed expert tensors

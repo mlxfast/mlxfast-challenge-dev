@@ -3,6 +3,7 @@ import CryptoKit
 import MLX
 import MLXFastCore
 @testable import MLXFastDeepSeek
+@testable import MLXFastDeepSeekHarness
 import Testing
 
 @Test

@@ -76,16 +76,20 @@ The active editable surface is Swift-only and is defined by `benchmark.json`:
 
 | Path | Scope |
 |---|---|
-| `Sources/MLXFastDeepSeek/` | DeepSeek V4 Flash runtime, attention, MoE, expert streaming, correctness, benchmark timing. |
+| `Sources/MLXFastDeepSeek/` | DeepSeek V4 Flash model implementation: attention, MoE, expert streaming, caches, weight loading, and prefill/decode execution. |
 | `Sources/MLXFastTransform/` | Offline safetensors transform and expert manifest generation. |
 
-`Sources/MLXFastCore/`, `Sources/MLXFastHarness/`, `Sources/MLXFastCLI/`,
-scripts, tests, `benchmark.json`, generated `weights/`, reference checkpoints,
-golden fixtures, and local scores are harness/operator files, not submission
-surface. `mlxfast-swift submit` packages only `editablePaths`, rejects symlinks
-and generated/model artifact paths, skips macOS metadata files, and applies a
-256 MiB default source archive input cap. Override the cap with
-`MLXFAST_MAX_SUBMISSION_BYTES` or `mlxfast-swift submit --max-bytes`.
+`Sources/MLXFastCore/`, `Sources/MLXFastHarness/`,
+`Sources/MLXFastDeepSeekHarness/`, `Sources/MLXFastCLI/`,
+`Sources/MLXFastSubmission/`, scripts, tests, `benchmark.json`, generated
+`weights/`, reference checkpoints, golden fixtures, and local scores are
+harness/operator files, not submission surface. Correctness, scoring, timing,
+golden generation, benchmark-oracle validation, provenance checks, and
+submission packaging live in that trusted harness layer. `mlxfast-swift submit`
+packages only `editablePaths`, rejects symlinks and generated/model artifact
+paths, skips macOS metadata files, and applies a 256 MiB default source archive
+input cap. Override the cap with `MLXFAST_MAX_SUBMISSION_BYTES` or
+`mlxfast-swift submit --max-bytes`.
 
 Use `mlxfast-swift submit --dry-run --output mlxfast-submission.zip` for local
 inspection. For Yukon upload, run `mlxfast-swift login <api-key> --api <url>`

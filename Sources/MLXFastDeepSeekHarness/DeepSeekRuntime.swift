@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import MLX
 import MLXFastCore
+import MLXFastDeepSeek
 
 public struct CorrectnessOptions: Equatable {
     public let weightsPath: String
@@ -906,17 +907,18 @@ public enum DeepSeekRuntime {
             positionOffset: 0
         )
         var token = try DeepSeekCorrectness.greedyToken(from: logits)
+        var generated: [Int] = []
+        generated.reserveCapacity(steps)
 
         for step in 0..<steps {
-            let expectedToken = testCase.expectedTokens[step]
-            if token != expectedToken {
-                return CorrectnessTokenComparison(
-                    passed: false,
-                    checkedSteps: step + 1,
-                    firstFailingStep: step,
-                    expectedToken: expectedToken,
-                    actualToken: token
-                )
+            generated.append(token)
+            let comparison = DeepSeekCorrectness.compareTokens(
+                expected: testCase.expectedTokens,
+                actual: generated,
+                steps: step + 1
+            )
+            if !comparison.passed {
+                return comparison
             }
 
             if step == steps - 1 {
@@ -933,12 +935,10 @@ public enum DeepSeekRuntime {
             token = try DeepSeekCorrectness.greedyToken(from: logits)
         }
 
-        return CorrectnessTokenComparison(
-            passed: true,
-            checkedSteps: steps,
-            firstFailingStep: nil,
-            expectedToken: nil,
-            actualToken: nil
+        return DeepSeekCorrectness.compareTokens(
+            expected: testCase.expectedTokens,
+            actual: generated,
+            steps: steps
         )
     }
 

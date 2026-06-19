@@ -4,6 +4,34 @@ import Testing
 @testable import MLXFastSubmission
 
 @Test
+func benchmarkContractDoesNotExposeTrustedHarnessPaths() throws {
+    let root = repositoryRoot()
+    let archive = try temporarySubmissionDirectory()
+        .appendingPathComponent("submission-boundary.zip")
+    let report = try SubmissionSupport.packageEditablePaths(
+        contractPath: root.appendingPathComponent("benchmark.json").path,
+        outputPath: archive.path,
+        maxByteCount: nil
+    )
+
+    #expect(report.editablePaths == [
+        "Sources/MLXFastDeepSeek",
+        "Sources/MLXFastTransform",
+    ])
+    #expect(!report.editablePaths.contains("Sources/MLXFastDeepSeekHarness"))
+    #expect(!report.editablePaths.contains("Sources/MLXFastHarness"))
+    #expect(!report.editablePaths.contains("Sources/MLXFastCLI"))
+    #expect(!report.editablePaths.contains("Sources/MLXFastSubmission"))
+
+    let archiveData = try Data(contentsOf: archive)
+    #expect(archiveData.containsUTF8("Sources/MLXFastDeepSeek/DeepSeekModel.swift"))
+    #expect(archiveData.containsUTF8("Sources/MLXFastTransform/Transform.swift"))
+    #expect(!archiveData.containsUTF8("Sources/MLXFastDeepSeekHarness/"))
+    #expect(!archiveData.containsUTF8("Sources/MLXFastCLI/"))
+    #expect(!archiveData.containsUTF8("Sources/MLXFastSubmission/"))
+}
+
+@Test
 func submissionPackagesEditableFilesAndSkipsMacMetadata() throws {
     let root = try makeSubmissionWorkspace(editablePaths: ["Sources"])
     let sources = root.appendingPathComponent("Sources", isDirectory: true)
@@ -631,6 +659,13 @@ private func writeSubmissionContract(_ path: URL, editablePaths: [String]) throw
     }
     """
     try json.write(to: path, atomically: true, encoding: .utf8)
+}
+
+private func repositoryRoot() -> URL {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
 }
 
 private extension Data {
