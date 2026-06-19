@@ -10,12 +10,14 @@ REFERENCE_APPEND_DOWNLOAD_QUERY="${MLXFAST_REFERENCE_APPEND_DOWNLOAD_QUERY:-auto
 REFERENCE_MIN_FREE_GIB="${MLXFAST_REFERENCE_MIN_FREE_GIB:-170}"
 REFERENCE_DOWNLOAD_JOBS="${MLXFAST_REFERENCE_DOWNLOAD_JOBS:-4}"
 SWIFT_BIN="${MLXFAST_SWIFT_BIN:-.build/release/mlxfast-swift}"
-REFERENCE_METADATA_FILES=(
+REFERENCE_REQUIRED_METADATA_FILES=(
+  "config.json"
+  "model.safetensors.index.json"
+)
+REFERENCE_OPTIONAL_METADATA_FILES=(
   "README.md"
   "chat_template.jinja"
-  "config.json"
   "generation_config.json"
-  "model.safetensors.index.json"
   "tokenizer.json"
   "tokenizer_config.json"
 )
@@ -220,6 +222,18 @@ download_reference_file() {
   touch "${marker_path}"
 }
 
+download_optional_reference_file() {
+  local file="$1"
+  local output_path="$2"
+
+  if download_reference_file "${file}" "${output_path}"; then
+    return 0
+  fi
+
+  rm -f "${output_path}" "${output_path}.complete"
+  echo "setup.sh: optional metadata ${file} was not available; continuing"
+}
+
 download_reference_shards() {
   local output_dir="$1"
   shift
@@ -406,8 +420,11 @@ EOF
   mkdir -p "${partial_dir}"
 
   echo "setup.sh: downloading ${REFERENCE_MODEL_REPO} from ${REFERENCE_BASE_URL}"
-  for file in "${REFERENCE_METADATA_FILES[@]}"; do
+  for file in "${REFERENCE_REQUIRED_METADATA_FILES[@]}"; do
     download_reference_file "${file}" "${partial_dir}/${file}"
+  done
+  for file in "${REFERENCE_OPTIONAL_METADATA_FILES[@]}"; do
+    download_optional_reference_file "${file}" "${partial_dir}/${file}"
   done
 
   if [[ ! -f "${partial_dir}/config.json" ]]; then
