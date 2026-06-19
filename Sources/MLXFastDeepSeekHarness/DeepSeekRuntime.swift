@@ -210,10 +210,16 @@ public struct BenchmarkOptions: Equatable {
 public struct GoldenGenerationOptions: Equatable {
     public let weightsPath: String
     public let promptManifest: GoldenPromptManifest
+    public let progressIntervalSteps: Int
 
-    public init(weightsPath: String, promptManifest: GoldenPromptManifest) {
+    public init(
+        weightsPath: String,
+        promptManifest: GoldenPromptManifest,
+        progressIntervalSteps: Int = 0
+    ) {
         self.weightsPath = weightsPath
         self.promptManifest = promptManifest
+        self.progressIntervalSteps = progressIntervalSteps
     }
 }
 
@@ -248,22 +254,43 @@ public enum DeepSeekRuntime {
             expertStreamingConfig: ExpertStreamingConfig.fromEnvironment(recordsMetricsDefault: false)
         )
         let weightCache = DeepSeekRuntimeWeightCache(loader: loader, config: config)
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        let progress = makeGoldenProgressReporter(
+            intervalSteps: options.progressIntervalSteps,
+            startedAt: startedAt
+        )
+        progress(
+            "start cases=\(options.promptManifest.cases.count) correctness_steps=\(MLXFastConstants.correctnessSteps) benchmark_decode_steps=\(MLXFastConstants.benchmarkDecodeSteps)"
+        )
 
         let cases = try options.promptManifest.cases.map { promptCase in
-            GoldenCase(
+            progress(
+                "case \(promptCase.name) start prompt_tokens=\(promptCase.promptTokens.count)"
+            )
+            return GoldenCase(
                 name: promptCase.name,
                 promptTokens: promptCase.promptTokens,
                 expectedTokens: try generateGreedyCached(
                     promptTokens: promptCase.promptTokens,
                     steps: MLXFastConstants.correctnessSteps,
-                    weightCache: weightCache
+                    weightCache: weightCache,
+                    progressIntervalSteps: options.progressIntervalSteps,
+                    progress: { step, total in
+                        progress("case \(promptCase.name) generated \(step)/\(total) tokens")
+                    }
                 )
             )
         }
+        progress("benchmark oracle start prompt_tokens=\(options.promptManifest.benchmark.promptTokens.count)")
         let benchmark = try generateBenchmarkGolden(
             promptTokens: options.promptManifest.benchmark.promptTokens,
-            weightCache: weightCache
+            weightCache: weightCache,
+            progressIntervalSteps: options.progressIntervalSteps,
+            progress: { step, total in
+                progress("benchmark oracle generated \(step)/\(total) decode tokens")
+            }
         )
+        progress("complete")
         return GoldenDocument(cases: cases, benchmark: benchmark)
     }
 
@@ -815,6 +842,34 @@ public enum DeepSeekRuntime {
         Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000.0
     }
 
+    private static func makeGoldenProgressReporter(
+        intervalSteps: Int,
+        startedAt: UInt64
+    ) -> (String) -> Void {
+        guard intervalSteps > 0 else {
+            return { _ in }
+        }
+        return { message in
+            let elapsed = String(format: "%.1f", secondsSince(startedAt))
+            fputs("mlxfast: make-golden elapsed=\(elapsed)s \(message)\n", stderr)
+            fflush(stderr)
+        }
+    }
+
+    private static func reportProgress(
+        step: Int,
+        total: Int,
+        intervalSteps: Int,
+        progress: ((Int, Int) -> Void)?
+    ) {
+        guard let progress, intervalSteps > 0 else {
+            return
+        }
+        if step == 1 || step == total || step.isMultiple(of: intervalSteps) {
+            progress(step, total)
+        }
+    }
+
     private static func commitIdentifier() -> String {
         (try? runProcess("/usr/bin/git", arguments: ["rev-parse", "--short", "HEAD"])) ?? ""
     }
@@ -1159,7 +1214,9 @@ public enum DeepSeekRuntime {
     private static func generateGreedyCached(
         promptTokens: [Int],
         steps: Int,
-        weightCache: DeepSeekRuntimeWeightCache
+        weightCache: DeepSeekRuntimeWeightCache,
+        progressIntervalSteps: Int = 0,
+        progress: ((Int, Int) -> Void)? = nil
     ) throws -> [Int] {
         guard !promptTokens.isEmpty else {
             throw MLXFastError.invalidInput("greedy correctness prompt must not be empty")
@@ -1181,6 +1238,12 @@ public enum DeepSeekRuntime {
 
         for step in 0..<steps {
             generated.append(token)
+            reportProgress(
+                step: step + 1,
+                total: steps,
+                intervalSteps: progressIntervalSteps,
+                progress: progress
+            )
             if step == steps - 1 {
                 break
             }
@@ -1197,7 +1260,9 @@ public enum DeepSeekRuntime {
 
     private static func generateBenchmarkGolden(
         promptTokens: [Int],
-        weightCache: DeepSeekRuntimeWeightCache
+        weightCache: DeepSeekRuntimeWeightCache,
+        progressIntervalSteps: Int = 0,
+        progress: ((Int, Int) -> Void)? = nil
     ) throws -> BenchmarkGolden {
         guard promptTokens.count >= MLXFastConstants.benchmarkPrefillPromptTokens else {
             throw MLXFastError.invalidInput(
@@ -1235,6 +1300,12 @@ public enum DeepSeekRuntime {
             )
             token = try DeepSeekCorrectness.greedyToken(from: logits)
             decodeTokens.append(token)
+            reportProgress(
+                step: decodedStep + 1,
+                total: timingPlan.decodeSteps,
+                intervalSteps: progressIntervalSteps,
+                progress: progress
+            )
         }
 
         return BenchmarkGolden(

@@ -274,7 +274,14 @@ private enum MLXFastCLI {
 
     private static func runMakeGolden(_ options: ParsedOptions) throws {
         try options.validate(
-            valueOptions: ["--weights", "--output", "--prompt-file", "--name", "--prompt-tokens"]
+            valueOptions: [
+                "--weights",
+                "--output",
+                "--prompt-file",
+                "--name",
+                "--prompt-tokens",
+                "--progress-every",
+            ]
         )
         let weightsPath = options.value(
             for: "--weights",
@@ -287,6 +294,13 @@ private enum MLXFastCLI {
         let promptFile = options.value(for: "--prompt-file", default: "")
         let promptTokens = options.value(for: "--prompt-tokens", default: "")
         let name = options.value(for: "--name", default: "local")
+        let progressIntervalSteps = try parseNonNegativeInt(
+            options.value(
+                for: "--progress-every",
+                default: environmentValue("MLXFAST_GOLDEN_PROGRESS_EVERY", fallback: "64")
+            ),
+            optionName: "--progress-every"
+        )
 
         let manifest: GoldenPromptManifest
         if !promptFile.isEmpty {
@@ -313,7 +327,11 @@ private enum MLXFastCLI {
         }
 
         let document = try DeepSeekRuntime.generateGolden(
-            GoldenGenerationOptions(weightsPath: weightsPath, promptManifest: manifest)
+            GoldenGenerationOptions(
+                weightsPath: weightsPath,
+                promptManifest: manifest,
+                progressIntervalSteps: progressIntervalSteps
+            )
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -601,7 +619,7 @@ private enum MLXFastCLI {
               mlxfast-swift correctness-trace [--weights PATH] [--golden PATH] [--case NAME] --step N [--top-k N]
               mlxfast-swift preflight [--weights PATH] [--golden PATH]
               mlxfast-swift benchmark [--weights PATH] [--golden PATH] [--score-path PATH]
-              mlxfast-swift make-golden [--weights PATH] [--output PATH] (--prompt-file PATH | --prompt-tokens TOKENS [--name NAME])
+              mlxfast-swift make-golden [--weights PATH] [--output PATH] [--progress-every N] (--prompt-file PATH | --prompt-tokens TOKENS [--name NAME])
               mlxfast-swift checkpoint-shards --index PATH
               mlxfast-swift login [--api-key KEY | KEY] [--api URL] [--no-verify]
               mlxfast-swift config
@@ -648,6 +666,14 @@ private enum MLXFastCLI {
         }
         guard let value = Double(trimmed), value.isFinite else {
             throw MLXFastError.invalidInput("--claimed-score must be finite")
+        }
+        return value
+    }
+
+    private static func parseNonNegativeInt(_ raw: String, optionName: String) throws -> Int {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Int(trimmed), value >= 0 else {
+            throw MLXFastError.invalidInput("\(optionName) must be a non-negative integer")
         }
         return value
     }
