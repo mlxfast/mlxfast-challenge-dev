@@ -10,13 +10,8 @@ on:
         required: false
         type: string
       correctness_golden_url:
-        description: "Optional URL for precomputed correctness_golden.json. If empty, the workflow generates a temporary golden file from private_prompts.json."
+        description: "Optional URL for precomputed correctness_golden.json. If empty, MLXFAST_CORRECTNESS_GOLDEN_URL secret must be set."
         required: false
-        type: string
-      prompt_file:
-        description: "Prompt manifest used to generate temporary correctness_golden.json when no golden URL is provided."
-        required: false
-        default: "private_prompts.json"
         type: string
       reference_download_jobs:
         description: "Parallel shard downloads for setup.sh."
@@ -52,7 +47,6 @@ jobs:
       MLXFAST_REFERENCE_MIN_FREE_GIB: ${{ inputs.reference_min_free_gib }}
       MLXFAST_CORRECTNESS_GOLDEN_URL: ${{ inputs.correctness_golden_url || secrets.MLXFAST_CORRECTNESS_GOLDEN_URL }}
       MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER: ${{ secrets.MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER }}
-      MLXFAST_PROMPT_FILE: ${{ inputs.prompt_file }}
       MLXFAST_VERIFY_TRANSFORM: ${{ inputs.verify_transform && '1' || '0' }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -67,44 +61,46 @@ jobs:
           BASE_SHA="$(git merge-base origin/main "${HEAD_SHA}")" \
             .github/scripts/enforce-modifiable-surface.sh
 
+      - name: Require precomputed correctness golden
+        run: |
+          set -euo pipefail
+          if [[ -z "${MLXFAST_CORRECTNESS_GOLDEN_URL:-}" ]]; then
+            echo "benchmark: no correctness golden URL configured." >&2
+            echo "benchmark: benchmark CI does not generate correctness_golden.json because a 32k-token golden can run for hours." >&2
+            echo "benchmark: pass workflow input correctness_golden_url or configure MLXFAST_CORRECTNESS_GOLDEN_URL." >&2
+            exit 1
+          fi
+
       - name: Setup Swift harness and reference checkpoint
         run: ./setup.sh
 
       - name: Transform reference checkpoint
         run: .build/release/mlxfast-swift transform
 
-      - name: Prepare correctness golden
+      - name: Download correctness golden
         run: |
           set -euo pipefail
-          if [[ -n "${MLXFAST_CORRECTNESS_GOLDEN_URL:-}" ]]; then
-            if [[ -n "${MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER:-}" ]]; then
-              echo "benchmark: downloading correctness_golden.json with configured auth header"
-              curl \
-                --fail \
-                --location \
-                --retry 5 \
-                --retry-all-errors \
-                --retry-delay 2 \
-                -H "${MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER}" \
-                --output correctness_golden.json \
-                "${MLXFAST_CORRECTNESS_GOLDEN_URL}"
-            else
-              echo "benchmark: downloading correctness_golden.json"
-              curl \
-                --fail \
-                --location \
-                --retry 5 \
-                --retry-all-errors \
-                --retry-delay 2 \
-                --output correctness_golden.json \
-                "${MLXFAST_CORRECTNESS_GOLDEN_URL}"
-            fi
+          if [[ -n "${MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER:-}" ]]; then
+            echo "benchmark: downloading correctness_golden.json with configured auth header"
+            curl \
+              --fail \
+              --location \
+              --retry 5 \
+              --retry-all-errors \
+              --retry-delay 2 \
+              -H "${MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER}" \
+              --output correctness_golden.json \
+              "${MLXFAST_CORRECTNESS_GOLDEN_URL}"
           else
-            echo "benchmark: generating temporary correctness_golden.json from ${MLXFAST_PROMPT_FILE}"
-            .build/release/mlxfast-swift make-golden \
-              --weights weights \
-              --prompt-file "${MLXFAST_PROMPT_FILE}" \
-              --output correctness_golden.json
+            echo "benchmark: downloading correctness_golden.json"
+            curl \
+              --fail \
+              --location \
+              --retry 5 \
+              --retry-all-errors \
+              --retry-delay 2 \
+              --output correctness_golden.json \
+              "${MLXFAST_CORRECTNESS_GOLDEN_URL}"
           fi
           test -s correctness_golden.json
 

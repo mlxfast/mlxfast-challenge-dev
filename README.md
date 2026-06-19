@@ -50,11 +50,13 @@ be supplied separately. The Swift CLI also honors `MLXFAST_REFERENCE_DIR`,
 For manual GitHub Actions benchmark runs, dispatch `benchmark.yml` on a macOS
 Blacksmith runner. Set `reference_base_url` to an HTTP prefix containing the
 reference checkpoint files, such as an R2 public bucket or Worker route. The
-workflow uses `private_prompts.json` to generate a temporary
-`correctness_golden.json` unless `correctness_golden_url` or the
-`MLXFAST_CORRECTNESS_GOLDEN_URL` secret points at a precomputed golden file.
-Private endpoints can pass headers through `MLXFAST_REFERENCE_AUTH_HEADER` and
-`MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER` repository secrets.
+workflow requires a precomputed `correctness_golden.json` through the
+`correctness_golden_url` input or `MLXFAST_CORRECTNESS_GOLDEN_URL` repository
+secret; it fails before model setup if neither is configured. Generating
+goldens inside the benchmark workflow is intentionally disabled because a full
+32k-token oracle can run for hours. Private endpoints can pass headers through
+`MLXFAST_REFERENCE_AUTH_HEADER` and `MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER`
+repository secrets.
 
 ## Why this challenge exists
 
@@ -177,8 +179,9 @@ Organizer golden files can be generated from a private prompt manifest:
 ```
 
 This repo currently includes a temporary `private_prompts.json` manifest for
-manual benchmark bring-up. The final hidden prompts and generated golden file
-should be supplied outside the public repository.
+manual benchmark bring-up. Generate final hidden goldens outside the public
+repository and provide the resulting file to benchmark CI with
+`correctness_golden_url` or `MLXFAST_CORRECTNESS_GOLDEN_URL`.
 
 The manifest contains correctness prompts plus a dedicated benchmark prompt
 (arrays shown as placeholders):
