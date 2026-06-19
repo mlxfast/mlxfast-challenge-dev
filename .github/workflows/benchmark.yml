@@ -28,6 +28,16 @@ on:
         required: false
         default: "170"
         type: string
+      reference_cache:
+        description: "Restore/save the reference checkpoint through Actions/Blacksmith cache. Requires cache quota above the model size."
+        required: false
+        default: true
+        type: boolean
+      reference_cache_key:
+        description: "Cache key for the complete reference checkpoint. Change when the checkpoint index changes."
+        required: false
+        default: "reference-macos-deepseek-v4-flash-4bit-be0366872ceb26fcbeb67aade5aed8b94eb53b49550d35cabbe9438b073a8637"
+        type: string
       verify_transform:
         description: "Run deterministic transform verification before timing."
         required: false
@@ -54,6 +64,7 @@ jobs:
       MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER: ${{ secrets.MLXFAST_CORRECTNESS_GOLDEN_AUTH_HEADER }}
       MLXFAST_PROMPT_FILE: ${{ inputs.prompt_file }}
       MLXFAST_VERIFY_TRANSFORM: ${{ inputs.verify_transform && '1' || '0' }}
+      SEGMENT_DOWNLOAD_TIMEOUT_MINS: 60
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -67,7 +78,16 @@ jobs:
           BASE_SHA="$(git merge-base origin/main "${HEAD_SHA}")" \
             .github/scripts/enforce-modifiable-surface.sh
 
+      - name: Restore reference checkpoint cache
+        if: ${{ inputs.reference_cache }}
+        id: reference-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reference_weights/DeepSeek-V4-Flash-4bit
+          key: ${{ inputs.reference_cache_key }}
+
       - name: Setup Swift harness and reference checkpoint
+        id: setup
         run: ./setup.sh
 
       - name: Transform reference checkpoint
@@ -125,3 +145,11 @@ jobs:
             benchmark-integrity.json
             results.tsv
           if-no-files-found: ignore
+
+      - name: Save reference checkpoint cache
+        if: ${{ always() && inputs.reference_cache && steps.setup.outcome == 'success' && steps.reference-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reference_weights/DeepSeek-V4-Flash-4bit
+          key: ${{ steps.reference-cache.outputs.cache-primary-key || inputs.reference_cache_key }}
