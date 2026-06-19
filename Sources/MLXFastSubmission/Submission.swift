@@ -19,15 +19,18 @@ public struct SubmissionArchiveReport: Codable, Equatable {
 
 public struct StoredCredentials: Codable, Equatable {
     public let apiKey: String
+    public let apiBaseURL: String?
     public let storedAt: Double
 
-    public init(apiKey: String, storedAt: Double) {
+    public init(apiKey: String, apiBaseURL: String? = nil, storedAt: Double) {
         self.apiKey = apiKey
+        self.apiBaseURL = apiBaseURL
         self.storedAt = storedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case apiKey = "api_key"
+        case apiBaseURL = "api_base_url"
         case storedAt = "stored_at"
     }
 }
@@ -110,6 +113,7 @@ public enum SubmissionSupport {
 
     public static func storeCredentials(
         apiKey: String,
+        apiBaseURL: String? = nil,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         storedAt: Double = Date().timeIntervalSince1970
@@ -118,12 +122,15 @@ public enum SubmissionSupport {
         guard !trimmed.isEmpty else {
             throw MLXFastError.invalidInput("login requires a non-empty API key")
         }
+        let normalizedAPIBaseURL = try apiBaseURL.map(normalizeAPIBaseURL)
         let directory = try credentialsDirectory(homeDirectory: homeDirectory, environment: environment)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("credentials")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(StoredCredentials(apiKey: trimmed, storedAt: storedAt))
+        let data = try encoder.encode(
+            StoredCredentials(apiKey: trimmed, apiBaseURL: normalizedAPIBaseURL, storedAt: storedAt)
+        )
         try data.write(to: path, options: [.atomic])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
         return path.path
@@ -147,7 +154,97 @@ public enum SubmissionSupport {
         guard !trimmed.isEmpty else {
             throw MLXFastError.invalidInput("stored credentials contain an empty API key")
         }
-        return StoredCredentials(apiKey: trimmed, storedAt: credentials.storedAt)
+        let normalizedAPIBaseURL = try credentials.apiBaseURL.map(normalizeAPIBaseURL)
+        return StoredCredentials(
+            apiKey: trimmed,
+            apiBaseURL: normalizedAPIBaseURL,
+            storedAt: credentials.storedAt
+        )
+    }
+
+    public static func configuredAPIBaseURL(
+        credentials: StoredCredentials? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> String {
+        if let value = nonEmptyEnvironmentValue("MLXFAST_API_URL", in: environment) {
+            return try normalizeAPIBaseURL(value)
+        }
+        if let value = nonEmptyEnvironmentValue("YUKON_API_URL", in: environment) {
+            return try normalizeAPIBaseURL(value)
+        }
+        if let value = credentials?.apiBaseURL {
+            return try normalizeAPIBaseURL(value)
+        }
+        return "https://yukon-api-dev.fly.dev"
+    }
+
+    public static func configuredAPIKey(
+        credentials: StoredCredentials? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        if let value = nonEmptyEnvironmentValue("MLXFAST_API_KEY", in: environment) {
+            return value
+        }
+        if let value = nonEmptyEnvironmentValue("MLXFAST_API_TOKEN", in: environment) {
+            return value
+        }
+        if let value = nonEmptyEnvironmentValue("YUKON_API_TOKEN", in: environment) {
+            return value
+        }
+        return credentials?.apiKey
+    }
+
+    public static func packageEditablePathsTarGzip(
+        contractPath: String,
+        outputPath: String,
+        maxByteCount: Int? = MLXFastConstants.defaultMaxSubmissionSourceBytes
+    ) throws -> SubmissionArchiveReport {
+        let contract = try loadContract(at: contractPath)
+        let files = try editableFiles(from: contract, contractPath: contractPath)
+        guard !files.isEmpty else {
+            throw MLXFastError.invalidInput("benchmark.json editablePaths did not select any files")
+        }
+
+        let archiveURL = try validateTarGzipOutputPath(
+            outputPath,
+            contractPath: contractPath,
+            editablePaths: contract.editablePaths
+        )
+        let byteCount = try totalByteCount(files)
+        if let maxByteCount, byteCount > maxByteCount {
+            throw MLXFastError.invalidInput(
+                "submission source files total \(byteCount) bytes; limit is \(maxByteCount)"
+            )
+        }
+
+        if let parent = archiveURL.deletingLastPathComponentIfPresent() {
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        }
+        if FileManager.default.fileExists(atPath: archiveURL.path) {
+            let values = try archiveURL.resourceValues(forKeys: [.isDirectoryKey])
+            guard values.isDirectory != true else {
+                throw MLXFastError.invalidInput("submission archive output is a directory: \(archiveURL.path)")
+            }
+            try FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let contractRoot = URL(fileURLWithPath: contractPath).standardizedFileURL
+            .deletingLastPathComponent()
+        try runTarGzip(
+            relativeFiles: files.map(\.relativePath),
+            archivePath: archiveURL.path,
+            workingDirectory: contractRoot
+        )
+        let archiveSha256 = try fileSHA256(archiveURL)
+
+        return SubmissionArchiveReport(
+            contractPath: URL(fileURLWithPath: contractPath).standardizedFileURL.path,
+            archivePath: archiveURL.path,
+            editablePaths: contract.editablePaths,
+            fileCount: files.count,
+            byteCount: byteCount,
+            archiveSha256: archiveSha256
+        )
     }
 
     private struct EditableFile: Equatable {
@@ -198,6 +295,21 @@ public enum SubmissionSupport {
             throw MLXFastError.invalidInput("\(environmentName) must be an absolute path")
         }
         return URL(fileURLWithPath: expandedPath, isDirectory: true).standardizedFileURL
+    }
+
+    private static func normalizeAPIBaseURL(_ rawValue: String) throws -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MLXFastError.invalidInput("API URL must not be empty")
+        }
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              components.host?.isEmpty == false else {
+            throw MLXFastError.invalidInput("API URL must be an absolute http(s) URL")
+        }
+        return String(trimmed.drop { $0 == " " || $0 == "\n" || $0 == "\t" })
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private static func loadContract(at path: String) throws -> ChallengeContract {
@@ -358,7 +470,36 @@ public enum SubmissionSupport {
         guard archiveURL.pathExtension.lowercased() == "zip" else {
             throw MLXFastError.invalidInput("submission archive output must end in .zip")
         }
+        try validateArchiveNotInsideEditablePath(
+            archiveURL,
+            contractPath: contractPath,
+            editablePaths: editablePaths
+        )
+        return archiveURL
+    }
 
+    private static func validateTarGzipOutputPath(
+        _ outputPath: String,
+        contractPath: String,
+        editablePaths: [String]
+    ) throws -> URL {
+        let archiveURL = URL(fileURLWithPath: outputPath).standardizedFileURL
+        guard archiveURL.path.hasSuffix(".tar.gz") || archiveURL.path.hasSuffix(".tgz") else {
+            throw MLXFastError.invalidInput("submission archive output must end in .tar.gz or .tgz")
+        }
+        try validateArchiveNotInsideEditablePath(
+            archiveURL,
+            contractPath: contractPath,
+            editablePaths: editablePaths
+        )
+        return archiveURL
+    }
+
+    private static func validateArchiveNotInsideEditablePath(
+        _ archiveURL: URL,
+        contractPath: String,
+        editablePaths: [String]
+    ) throws {
         let root = URL(fileURLWithPath: contractPath).standardizedFileURL.deletingLastPathComponent()
         let archivePath = archiveURL.path
         for editablePath in editablePaths {
@@ -371,7 +512,6 @@ public enum SubmissionSupport {
                 )
             }
         }
-        return archiveURL
     }
 
     private static func totalByteCount(_ files: [EditableFile]) throws -> Int {
@@ -438,6 +578,38 @@ public enum SubmissionSupport {
                 encoding: .utf8
             ) ?? ""
             throw MLXFastError.invalidInput("zip failed with status \(process.terminationStatus): \(error)")
+        }
+    }
+
+    private static func runTarGzip(
+        relativeFiles: [String],
+        archivePath: String,
+        workingDirectory: URL
+    ) throws {
+        let candidates = ["/usr/bin/tar", "/opt/homebrew/bin/tar", "/usr/local/bin/tar"]
+        guard let tar = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw MLXFastError.missingFile("tar executable not found")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tar)
+        process.arguments = ["-czf", archivePath] + relativeFiles
+        process.currentDirectoryURL = workingDirectory
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["COPYFILE_DISABLE": "1"]
+        ) { _, new in new }
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let error = String(
+                data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                encoding: .utf8
+            ) ?? ""
+            throw MLXFastError.invalidInput("tar failed with status \(process.terminationStatus): \(error)")
         }
     }
 

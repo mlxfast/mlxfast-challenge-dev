@@ -85,8 +85,13 @@ golden fixtures, and local scores are harness/operator files, not submission
 surface. `mlxfast-swift submit` packages only `editablePaths`, rejects symlinks
 and generated/model artifact paths, skips macOS metadata files, and applies a
 256 MiB default source archive input cap. Override the cap with
-`MLXFAST_MAX_SUBMISSION_BYTES` or `mlxfast-swift submit --max-bytes`. The submit
-report includes the generated zip SHA-256 hash.
+`MLXFAST_MAX_SUBMISSION_BYTES` or `mlxfast-swift submit --max-bytes`.
+
+Use `mlxfast-swift submit --dry-run --output mlxfast-submission.zip` for local
+inspection. For Yukon upload, run `mlxfast-swift login <api-key> --api <url>`
+once, then `mlxfast-swift submit <benchmark-id-or-name> --note "..."`. Uploads
+are sent as a gzip tar archive with bearer-token auth; the backend applies the
+archive to the frozen benchmark checkout and runs hidden validation.
 
 `mlxfast-swift verify-transform` is an organizer/debug check for deterministic
 transform output. It re-runs the submitted transform and compares the generated
@@ -148,5 +153,5 @@ swift build -c release
 .build/release/mlxfast-swift make-golden --prompt-file private_prompts.json --output correctness_golden.json
 .build/release/mlxfast-swift verify-transform
 .build/release/mlxfast-swift clone
-.build/release/mlxfast-swift submit --output mlxfast-submission.zip
+.build/release/mlxfast-swift submit --dry-run --output mlxfast-submission.zip
 ```

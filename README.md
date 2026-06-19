@@ -77,13 +77,27 @@ in scope. Submissions should focus on the Swift targets listed in
 The repository is Swift-only: setup, transform, correctness, and benchmark all
 run through the Swift package.
 
-`mlxfast-swift submit` reads `benchmark.json` and archives only the paths listed
-in `editablePaths` for the Yukon backend. Generated `weights/`, reference
-checkpoints, golden files, local scores, repository metadata, symlinks, and macOS
-metadata files are not submitted. The default source archive input cap is
-256 MiB; override it with `MLXFAST_MAX_SUBMISSION_BYTES` or
-`mlxfast-swift submit --max-bytes`. The submit report includes the generated zip
-SHA-256 hash.
+`mlxfast-swift submit --dry-run` reads `benchmark.json` and archives only the
+paths listed in `editablePaths`. Generated `weights/`, reference checkpoints,
+golden files, local scores, repository metadata, symlinks, and macOS metadata
+files are not submitted. The default source archive input cap is 256 MiB;
+override it with `MLXFAST_MAX_SUBMISSION_BYTES` or
+`mlxfast-swift submit --max-bytes`. The dry-run report includes the generated
+zip SHA-256 hash.
+
+For Yukon upload, first store an API key:
+
+```bash
+.build/release/mlxfast-swift login <api-key> --api https://yukon-api.fly.dev
+.build/release/mlxfast-swift submit <benchmark-id-or-name> \
+  --note "Changed expert streaming prefetch policy."
+```
+
+The upload path packages the same editable paths as `submission.tar.gz` and
+POSTs it to Yukon with `Authorization: Bearer <api-key>` and an idempotency key.
+`YUKON_API_URL`, `YUKON_API_TOKEN`, `MLXFAST_API_URL`, `MLXFAST_API_KEY`, and
+`MLXFAST_BENCHMARK_REF` can be used in CI or scripted runs. Use `--dry-run` to
+force local packaging even when credentials are configured.
 
 ## Scoring
 

@@ -43,6 +43,9 @@ private enum MLXFastCLI {
             case "login":
                 try runLogin(options)
                 return 0
+            case "config":
+                try runConfig(options)
+                return 0
             case "clone":
                 try runClone(options)
                 return 0
@@ -284,7 +287,11 @@ private enum MLXFastCLI {
     }
 
     private static func runLogin(_ options: ParsedOptions) throws {
-        try options.validate(valueOptions: ["--api-key"], allowPositionals: true)
+        try options.validate(
+            valueOptions: ["--api-key", "--api"],
+            flagOptions: ["--no-verify"],
+            allowPositionals: true
+        )
         let positionalAPIKeys = options.positionalArguments()
         guard positionalAPIKeys.count <= 1 else {
             throw MLXFastError.invalidInput("login accepts at most one positional API key")
@@ -296,8 +303,34 @@ private enum MLXFastCLI {
             for: "--api-key",
             default: positionalAPIKeys.first ?? environmentValue("MLXFAST_API_KEY", fallback: "")
         )
-        let path = try SubmissionSupport.storeCredentials(apiKey: apiKey)
+        let existingCredentials = try loadOptionalCredentials()
+        let apiBaseURL = try options.value(
+            for: "--api",
+            default: SubmissionSupport.configuredAPIBaseURL(credentials: existingCredentials)
+        )
+        if !options.hasFlag("--no-verify") {
+            do {
+                let client = try YukonClient(apiBaseURL: apiBaseURL, apiKey: apiKey)
+                let response = try client.me()
+                print("account: \(response.account.email)")
+            } catch let error as YukonAPIError where error.statusCode == 401 {
+                throw MLXFastError.invalidInput(
+                    "API key was not accepted by \(apiBaseURL); pass --api if the key belongs to another Yukon API"
+                )
+            }
+        }
+        let path = try SubmissionSupport.storeCredentials(apiKey: apiKey, apiBaseURL: apiBaseURL)
         print("credentials: \(path)")
+        print("api: \(apiBaseURL)")
+    }
+
+    private static func runConfig(_ options: ParsedOptions) throws {
+        try options.validate(valueOptions: [])
+        let credentials = try loadOptionalCredentials()
+        let apiBaseURL = try SubmissionSupport.configuredAPIBaseURL(credentials: credentials)
+        let hasToken = SubmissionSupport.configuredAPIKey(credentials: credentials) != nil
+        print("api: \(apiBaseURL)")
+        print("credentials: \(hasToken ? "configured" : "missing")")
     }
 
     private static func runClone(_ options: ParsedOptions) throws {
@@ -312,9 +345,28 @@ private enum MLXFastCLI {
     }
 
     private static func runSubmit(_ options: ParsedOptions) throws {
-        try options.validate(valueOptions: ["--contract", "--output", "--max-bytes"])
+        try options.validate(
+            valueOptions: [
+                "--api",
+                "--benchmark",
+                "--claimed-score",
+                "--contract",
+                "--max-bytes",
+                "--note",
+                "--note-file",
+                "--output",
+            ],
+            flagOptions: ["--dry-run"],
+            allowPositionals: true
+        )
+        let positionalBenchmarks = options.positionalArguments()
+        guard positionalBenchmarks.count <= 1 else {
+            throw MLXFastError.invalidInput("submit accepts at most one positional benchmark")
+        }
+        guard !(options.hasValue(for: "--benchmark") && !positionalBenchmarks.isEmpty) else {
+            throw MLXFastError.invalidInput("submit accepts either --benchmark ID or positional benchmark, not both")
+        }
         let contractPath = options.value(for: "--contract", default: "benchmark.json")
-        let outputPath = options.value(for: "--output", default: "mlxfast-submission.zip")
         let maxBytesRaw = options.value(
             for: "--max-bytes",
             default: environmentValue(
@@ -327,17 +379,78 @@ private enum MLXFastCLI {
             defaultByteCount: MLXFastConstants.defaultMaxSubmissionSourceBytes,
             optionName: "--max-bytes"
         )
-        let report = try SubmissionSupport.packageEditablePaths(
-            contractPath: contractPath,
-            outputPath: outputPath,
-            maxByteCount: maxByteCount
-        )
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(report)
-        FileHandle.standardOutput.write(data)
-        print("")
+        let credentials = try loadOptionalCredentials()
+        let apiKey = SubmissionSupport.configuredAPIKey(credentials: credentials)
+        let uploadRequested = !options.hasFlag("--dry-run") && (
+            apiKey != nil ||
+                options.hasValue(for: "--api") ||
+                options.hasValue(for: "--benchmark") ||
+                options.hasValue(for: "--claimed-score") ||
+                options.hasValue(for: "--note") ||
+                options.hasValue(for: "--note-file") ||
+                !positionalBenchmarks.isEmpty
+        )
+        if uploadRequested && apiKey == nil {
+            throw MLXFastError.invalidInput(
+                "submit upload requires login first; run mlxfast-swift login KEY or set MLXFAST_API_KEY"
+            )
+        }
+
+        if uploadRequested {
+            let benchmark = try resolveBenchmarkRef(
+                explicit: options.value(
+                    for: "--benchmark",
+                    default: positionalBenchmarks.first ?? ""
+                )
+            )
+            let note = try submissionNote(from: options)
+            let claimedScore = try parseOptionalDouble(options.value(for: "--claimed-score", default: ""))
+            let apiBaseURL = try options.value(
+                for: "--api",
+                default: SubmissionSupport.configuredAPIBaseURL(credentials: credentials)
+            )
+            let temporaryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mlxfast-submit-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: temporaryURL, withIntermediateDirectories: true)
+            defer {
+                try? FileManager.default.removeItem(at: temporaryURL)
+            }
+            let archiveURL = temporaryURL.appendingPathComponent("submission.tar.gz")
+            let report = try SubmissionSupport.packageEditablePathsTarGzip(
+                contractPath: contractPath,
+                outputPath: archiveURL.path,
+                maxByteCount: maxByteCount
+            )
+            let client = try YukonClient(apiBaseURL: apiBaseURL, apiKey: apiKey ?? "")
+            let response = try client.createSubmission(
+                YukonSubmissionOptions(
+                    benchmark: benchmark,
+                    archivePath: report.archivePath,
+                    note: note,
+                    claimedScore: claimedScore
+                )
+            )
+            print("submission: \(response.submission.id)")
+            print("status: \(response.submission.status)")
+            if let job = response.job {
+                print("job: \(job.id)")
+            }
+            print("archive_sha256: \(report.archiveSha256)")
+        } else {
+            let outputPath = options.value(for: "--output", default: "mlxfast-submission.zip")
+            let report = try SubmissionSupport.packageEditablePaths(
+                contractPath: contractPath,
+                outputPath: outputPath,
+                maxByteCount: maxByteCount
+            )
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(report)
+            FileHandle.standardOutput.write(data)
+            print("")
+        }
     }
 
     private static func printUsage() {
@@ -351,9 +464,10 @@ private enum MLXFastCLI {
               mlxfast-swift benchmark [--weights PATH] [--golden PATH] [--score-path PATH]
               mlxfast-swift make-golden [--weights PATH] [--output PATH] (--prompt-file PATH | --prompt-tokens TOKENS [--name NAME])
               mlxfast-swift checkpoint-shards --index PATH
-              mlxfast-swift login [--api-key KEY | KEY]
+              mlxfast-swift login [--api-key KEY | KEY] [--api URL] [--no-verify]
+              mlxfast-swift config
               mlxfast-swift clone [--contract benchmark.json]
-              mlxfast-swift submit [--contract benchmark.json] [--output mlxfast-submission.zip] [--max-bytes N]
+              mlxfast-swift submit [BENCHMARK] [--benchmark ID] [--contract benchmark.json] [--output mlxfast-submission.zip] [--max-bytes N] [--note TEXT | --note-file PATH] [--claimed-score N] [--dry-run]
 
             Swift-only DeepSeek V4 Flash harness entrypoint.
             """
@@ -384,6 +498,89 @@ private enum MLXFastCLI {
             )
         }
         return value
+    }
+
+    private static func parseOptionalDouble(_ raw: String) throws -> Double? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = Double(trimmed), value.isFinite else {
+            throw MLXFastError.invalidInput("--claimed-score must be finite")
+        }
+        return value
+    }
+
+    private static func loadOptionalCredentials() throws -> StoredCredentials? {
+        do {
+            return try SubmissionSupport.loadCredentials()
+        } catch MLXFastError.missingFile {
+            return nil
+        }
+    }
+
+    private static func resolveBenchmarkRef(explicit: String) throws -> String {
+        let explicit = explicit.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicit.isEmpty {
+            return explicit
+        }
+        if let value = nonEmptyEnvironmentValue("MLXFAST_BENCHMARK_REF") {
+            return value
+        }
+        if let value = nonEmptyEnvironmentValue("YUKON_BENCHMARK_REF") {
+            return value
+        }
+        if let value = gitConfigValue("yukon.benchmark-id") {
+            return value
+        }
+        throw MLXFastError.invalidInput(
+            "submit upload requires a benchmark id; pass BENCHMARK, --benchmark ID, or set MLXFAST_BENCHMARK_REF"
+        )
+    }
+
+    private static func submissionNote(from options: ParsedOptions) throws -> String? {
+        guard !(options.hasValue(for: "--note") && options.hasValue(for: "--note-file")) else {
+            throw MLXFastError.invalidInput("pass either --note or --note-file, not both")
+        }
+        if options.hasValue(for: "--note") {
+            return options.value(for: "--note", default: "")
+        }
+        if options.hasValue(for: "--note-file") {
+            let path = options.value(for: "--note-file", default: "")
+            guard !path.isEmpty else {
+                throw MLXFastError.invalidInput("--note-file requires a path")
+            }
+            return try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+        }
+        return nil
+    }
+
+    private static func nonEmptyEnvironmentValue(_ name: String) -> String? {
+        let value = ProcessInfo.processInfo.environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+
+    private static func gitConfigValue(_ key: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["config", "--get", key]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+        let value = String(
+            data: output.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
     }
 
     private static func parseTokenList(_ raw: String) throws -> [Int] {
@@ -459,6 +656,10 @@ private struct ParsedOptions {
 
     func hasValue(for name: String) -> Bool {
         values[name] != nil
+    }
+
+    func hasFlag(_ name: String) -> Bool {
+        flags.contains(name)
     }
 
     func positionalArguments() -> [String] {
