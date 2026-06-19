@@ -28,6 +28,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_benchmark:
+        description: "Run the timed benchmark after the correctness gate."
+        required: false
+        default: true
+        type: boolean
       trace_correctness_step:
         description: "Optional maintainer diagnostic: trace logits at a 0-based correctness decode step. Disabled on submission branches."
         required: false
@@ -152,7 +157,16 @@ jobs:
           path: .mlxfast-cache/correctness-golden
           key: ${{ steps.restore-correctness-golden.outputs.cache-primary-key }}
 
+      - name: Correctness
+        run: |
+          set -euo pipefail
+          .build/release/mlxfast-swift correctness \
+            --weights weights \
+            --golden correctness_golden.json \
+            > correctness-report.json
+
       - name: Benchmark
+        if: inputs.run_benchmark
         env:
           MLXFAST_NOTE: "ci ${{ github.event_name }} ${{ github.sha }}"
           MLXFAST_SKIP_TRANSFORM: "1"
@@ -175,6 +189,7 @@ jobs:
         with:
           name: benchmark-results-${{ github.run_id }}
           path: |
+            correctness-report.json
             score.json
             score.json.sha256
             benchmark-integrity.json
