@@ -81,7 +81,7 @@ func deepSeekCorrectnessGeneratesGreedyTokensWithGrowingContext() throws {
 func correctnessReportEncodesStableFailureFields() throws {
     let report = CorrectnessReport(
         passed: true,
-        checkedSteps: 256,
+        checkedSteps: MLXFastConstants.correctnessSteps,
         caseCount: 1,
         expertCacheHits: 4,
         expertCacheMisses: 6,
@@ -106,7 +106,7 @@ func correctnessReportEncodesStableFailureFields() throws {
     #expect(raw.contains("\"first_failing_step\" : null"))
     #expect(raw.contains("\"expected_token\" : null"))
     #expect(raw.contains("\"actual_token\" : null"))
-    #expect(raw.contains("\"checked_steps\" : 256"))
+    #expect(raw.contains("\"checked_steps\" : \(MLXFastConstants.correctnessSteps)"))
     #expect(raw.contains("\"case_count\" : 1"))
     #expect(raw.contains("\"expert_cache_hits\" : 4"))
     #expect(raw.contains("\"expert_cache_misses\" : 6"))
@@ -152,7 +152,7 @@ func deepSeekRuntimeCorrectnessReportsGoldenMetadataWhenWeightsAreMissing() thro
       "cases": [
         {
           "name": "valid-golden",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(arrayJSON(Array(repeating: 1, count: MLXFastConstants.correctnessPromptTokens))),
           "expected_tokens": \(expected)
         }
       ]
@@ -197,4 +197,8 @@ private func temporaryDirectory() throws -> URL {
     )
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func arrayJSON(_ values: [Int]) -> String {
+    "[\(values.map(String.init).joined(separator: ","))]"
 }

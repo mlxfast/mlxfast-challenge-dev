@@ -284,7 +284,7 @@ func benchmarkPreflightRejectsMissingBenchmarkOracle() throws {
       "cases": [
         {
           "name": "preflight",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(arrayJSON(Array(repeating: 1, count: MLXFastConstants.correctnessPromptTokens))),
           "expected_tokens": \(expected)
         }
       ]

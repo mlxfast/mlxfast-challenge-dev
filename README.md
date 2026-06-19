@@ -168,24 +168,26 @@ Organizer golden files can be generated from a private prompt manifest:
 ```
 
 The manifest contains correctness prompts plus a dedicated benchmark prompt
-(arrays shown abbreviated):
+(arrays shown as placeholders):
 
-```json
+```text
 {
   "version": 1,
   "cases": [
-    {"name": "hidden-0", "prompt_tokens": [1, 2, 3]}
+    {"name": "hidden-0", "prompt_tokens": [exactly 512 token IDs]}
   ],
   "benchmark": {
     "name": "timed-hidden",
-    "prompt_tokens": [1, 2, 3]
+    "prompt_tokens": [at least 512 token IDs]
   }
 }
 ```
 
-The benchmark prompt must contain at least 512 token IDs. The generated golden
-file stores exact expected tokens for the correctness gate, the 512-token
-prefill check, the 32-token decode seed, and the timed 512-token decode window.
+Each correctness prompt must contain exactly 512 token IDs. The benchmark prompt
+must contain at least 512 token IDs. The generated golden file stores exact
+expected tokens for each 512-token correctness prompt and its 2048-token greedy
+continuation, the 512-token prefill check, the 32-token decode seed, and the
+timed 512-token decode window.
 
 ## Requirements
 

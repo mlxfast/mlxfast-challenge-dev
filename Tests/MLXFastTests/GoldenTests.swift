@@ -14,7 +14,7 @@ func loadGoldenCasesAcceptsValidFixture() throws {
       "cases": [
         {
           "name": "hidden-0",
-          "prompt_tokens": [1, 2, 3],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ]
@@ -26,7 +26,7 @@ func loadGoldenCasesAcceptsValidFixture() throws {
 
     #expect(cases.count == 1)
     #expect(cases[0].name == "hidden-0")
-    #expect(cases[0].promptTokens == [1, 2, 3])
+    #expect(cases[0].promptTokens == correctnessPrompt())
     #expect(cases[0].expectedTokens.count == MLXFastConstants.correctnessSteps)
 
     let fixture = try loadGoldenFixture(from: path.path)
@@ -50,7 +50,7 @@ func loadGoldenFixtureAcceptsBenchmarkOracle() throws {
       "cases": [
         {
           "name": "hidden-0",
-          "prompt_tokens": [1, 2, 3],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ],
@@ -85,7 +85,7 @@ func loadGoldenFixtureRejectsMalformedBenchmarkOracle() throws {
       "cases": [
         {
           "name": "hidden-0",
-          "prompt_tokens": [1, 2, 3],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ],
@@ -116,7 +116,7 @@ func loadGoldenPromptManifestAcceptsPrivatePromptSpec() throws {
       "cases": [
         {
           "name": "hidden-0",
-          "prompt_tokens": [1, 2, 3]
+          "prompt_tokens": \(correctnessPromptJSON())
         }
       ],
       "benchmark": {
@@ -129,7 +129,7 @@ func loadGoldenPromptManifestAcceptsPrivatePromptSpec() throws {
 
     let manifest = try loadGoldenPromptManifest(from: path.path)
 
-    #expect(manifest.cases == [GoldenPromptCase(name: "hidden-0", promptTokens: [1, 2, 3])])
+    #expect(manifest.cases == [GoldenPromptCase(name: "hidden-0", promptTokens: correctnessPrompt())])
     #expect(manifest.benchmark.name == "timed-hidden")
     #expect(manifest.benchmark.promptTokens == benchmarkPrompt)
 }
@@ -144,11 +144,37 @@ func loadGoldenPromptManifestRejectsShortBenchmarkPrompt() throws {
       "cases": [
         {
           "name": "hidden-0",
-          "prompt_tokens": [1, 2, 3]
+          "prompt_tokens": \(correctnessPromptJSON())
         }
       ],
       "benchmark": {
         "prompt_tokens": [1]
+      }
+    }
+    """
+    try json.write(to: path, atomically: true, encoding: .utf8)
+
+    #expect(throws: MLXFastError.self) {
+        _ = try loadGoldenPromptManifest(from: path.path)
+    }
+}
+
+@Test
+func loadGoldenPromptManifestRejectsShortCorrectnessPrompt() throws {
+    let directory = try temporaryDirectory()
+    let path = directory.appendingPathComponent("prompts.json")
+    let benchmarkPrompt = Array(repeating: 11, count: MLXFastConstants.benchmarkPrefillPromptTokens)
+    let json = """
+    {
+      "version": 1,
+      "cases": [
+        {
+          "name": "hidden-0",
+          "prompt_tokens": [1]
+        }
+      ],
+      "benchmark": {
+        "prompt_tokens": \(benchmarkPrompt)
       }
     }
     """
@@ -200,13 +226,15 @@ func loadGoldenCasesRejectsOutOfRangeToken() throws {
     let directory = try temporaryDirectory()
     let path = directory.appendingPathComponent("golden.json")
     let expected = Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+    var prompt = correctnessPrompt()
+    prompt[0] = MLXFastConstants.vocabSize
     let json = """
     {
       "version": 1,
       "cases": [
         {
           "name": "bad",
-          "prompt_tokens": [\(MLXFastConstants.vocabSize)],
+          "prompt_tokens": \(arrayJSON(prompt)),
           "expected_tokens": \(expected)
         }
       ]
@@ -229,7 +257,7 @@ func loadGoldenCasesRejectsMissingVersion() throws {
       "cases": [
         {
           "name": "missing-version",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ]
@@ -253,12 +281,12 @@ func loadGoldenCasesRejectsDuplicateCaseNames() throws {
       "cases": [
         {
           "name": "duplicate",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         },
         {
           "name": "duplicate",
-          "prompt_tokens": [2],
+          "prompt_tokens": \(correctnessPromptJSON(2)),
           "expected_tokens": \(expected)
         }
       ]
@@ -282,7 +310,7 @@ func loadGoldenCasesRejectsNamesWithSurroundingWhitespace() throws {
       "cases": [
         {
           "name": " ambiguous ",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ]
@@ -306,7 +334,7 @@ func loadGoldenCasesRejectsNamesWithControlCharacters() throws {
       "cases": [
         {
           "name": "bad\\nname",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ]
@@ -330,6 +358,30 @@ func loadGoldenCasesRejectsWrongExpectedTokenCount() throws {
       "cases": [
         {
           "name": "wrong-count",
+          "prompt_tokens": \(correctnessPromptJSON()),
+          "expected_tokens": \(expected)
+        }
+      ]
+    }
+    """
+    try json.write(to: path, atomically: true, encoding: .utf8)
+
+    #expect(throws: MLXFastError.self) {
+        _ = try loadGoldenCases(from: path.path)
+    }
+}
+
+@Test
+func loadGoldenCasesRejectsWrongPromptTokenCount() throws {
+    let directory = try temporaryDirectory()
+    let path = directory.appendingPathComponent("golden.json")
+    let expected = Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+    let json = """
+    {
+      "version": 1,
+      "cases": [
+        {
+          "name": "wrong-prompt-count",
           "prompt_tokens": [1],
           "expected_tokens": \(expected)
         }
@@ -354,7 +406,7 @@ func loadGoldenCasesRejectsNonPositiveRequiredSteps() throws {
       "cases": [
         {
           "name": "bad-steps",
-          "prompt_tokens": [1],
+          "prompt_tokens": \(correctnessPromptJSON()),
           "expected_tokens": \(expected)
         }
       ]
@@ -367,6 +419,30 @@ func loadGoldenCasesRejectsNonPositiveRequiredSteps() throws {
     }
 }
 
+@Test
+func loadGoldenCasesRejectsNonPositiveRequiredPromptTokens() throws {
+    let directory = try temporaryDirectory()
+    let path = directory.appendingPathComponent("golden.json")
+    let expected = Array(repeating: 7, count: MLXFastConstants.correctnessSteps)
+    let json = """
+    {
+      "version": 1,
+      "cases": [
+        {
+          "name": "bad-prompt-steps",
+          "prompt_tokens": \(correctnessPromptJSON()),
+          "expected_tokens": \(expected)
+        }
+      ]
+    }
+    """
+    try json.write(to: path, atomically: true, encoding: .utf8)
+
+    #expect(throws: MLXFastError.self) {
+        _ = try loadGoldenCases(from: path.path, requiredPromptTokens: 0)
+    }
+}
+
 private func temporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
         UUID().uuidString,
@@ -374,4 +450,16 @@ private func temporaryDirectory() throws -> URL {
     )
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func correctnessPrompt(_ token: Int = 1) -> [Int] {
+    Array(repeating: token, count: MLXFastConstants.correctnessPromptTokens)
+}
+
+private func correctnessPromptJSON(_ token: Int = 1) -> String {
+    arrayJSON(correctnessPrompt(token))
+}
+
+private func arrayJSON(_ values: [Int]) -> String {
+    "[\(values.map(String.init).joined(separator: ","))]"
 }

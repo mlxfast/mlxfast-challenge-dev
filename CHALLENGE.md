@@ -114,10 +114,11 @@ There is no Python harness path.
 
 ## Correctness Gate
 
-Correctness is a hard gate. For each golden case, the harness runs cached greedy
-generation for 256 tokens with temperature-zero behavior and compares token IDs
-exactly. The first mismatch records the case, step, expected token, and actual
-token in the failed report.
+Correctness is a hard gate. For each golden case, the prompt must contain
+exactly 512 token IDs. The harness runs cached greedy generation for 2048 tokens
+with temperature-zero behavior and compares token IDs exactly. The first
+mismatch records the case, step, expected token, and actual token in the failed
+report.
 
 The gate is intended as a first-stage filter: an implementation that fails it is
 not eligible for the longer benchmark.

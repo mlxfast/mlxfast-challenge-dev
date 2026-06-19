@@ -143,17 +143,26 @@ public struct BenchmarkTokenComparison: Equatable {
 
 public func loadGoldenCases(
     from path: String,
-    requiredSteps: Int = MLXFastConstants.correctnessSteps
+    requiredSteps: Int = MLXFastConstants.correctnessSteps,
+    requiredPromptTokens: Int = MLXFastConstants.correctnessPromptTokens
 ) throws -> [GoldenCase] {
-    try loadGoldenFixture(from: path, requiredSteps: requiredSteps).cases
+    try loadGoldenFixture(
+        from: path,
+        requiredSteps: requiredSteps,
+        requiredPromptTokens: requiredPromptTokens
+    ).cases
 }
 
 public func loadGoldenFixture(
     from path: String,
-    requiredSteps: Int = MLXFastConstants.correctnessSteps
+    requiredSteps: Int = MLXFastConstants.correctnessSteps,
+    requiredPromptTokens: Int = MLXFastConstants.correctnessPromptTokens
 ) throws -> GoldenFixture {
     guard requiredSteps > 0 else {
         throw MLXFastError.invalidInput("correctness required steps must be positive")
+    }
+    guard requiredPromptTokens > 0 else {
+        throw MLXFastError.invalidInput("correctness required prompt tokens must be positive")
     }
     try requireFile(path, description: "correctness golden file")
 
@@ -162,7 +171,11 @@ public func loadGoldenFixture(
     guard decoded.version == 1 else {
         throw MLXFastError.invalidInput("correctness golden file version must be 1")
     }
-    try validateGoldenCases(decoded.cases, requiredSteps: requiredSteps)
+    try validateGoldenCases(
+        decoded.cases,
+        requiredSteps: requiredSteps,
+        requiredPromptTokens: requiredPromptTokens
+    )
     if let benchmark = decoded.benchmark {
         try validateBenchmarkGolden(benchmark)
     }
@@ -195,8 +208,10 @@ public func validateGoldenPromptManifest(_ manifest: GoldenPromptManifest) throw
         guard names.insert(testCase.name).inserted else {
             throw MLXFastError.invalidInput("duplicate golden prompt case name \(testCase.name)")
         }
-        guard !testCase.promptTokens.isEmpty else {
-            throw MLXFastError.invalidInput("\(testCase.name).prompt_tokens must not be empty")
+        guard testCase.promptTokens.count == MLXFastConstants.correctnessPromptTokens else {
+            throw MLXFastError.invalidInput(
+                "\(testCase.name).prompt_tokens has \(testCase.promptTokens.count) tokens; need exactly \(MLXFastConstants.correctnessPromptTokens)"
+            )
         }
         try validateTokens(testCase.promptTokens, field: "\(testCase.name).prompt_tokens")
     }
@@ -340,7 +355,11 @@ public func validateBenchmarkGolden(_ benchmark: BenchmarkGolden) throws {
     try validateTokens(benchmark.expectedDecodeTokens, field: "benchmark.expected_decode_tokens")
 }
 
-private func validateGoldenCases(_ cases: [GoldenCase], requiredSteps: Int) throws {
+private func validateGoldenCases(
+    _ cases: [GoldenCase],
+    requiredSteps: Int,
+    requiredPromptTokens: Int
+) throws {
     guard !cases.isEmpty else {
         throw MLXFastError.invalidInput("correctness golden file must contain at least one case")
     }
@@ -351,8 +370,10 @@ private func validateGoldenCases(_ cases: [GoldenCase], requiredSteps: Int) thro
         guard names.insert(testCase.name).inserted else {
             throw MLXFastError.invalidInput("duplicate correctness golden case name \(testCase.name)")
         }
-        if testCase.promptTokens.isEmpty {
-            throw MLXFastError.invalidInput("\(testCase.name).prompt_tokens must not be empty")
+        if testCase.promptTokens.count != requiredPromptTokens {
+            throw MLXFastError.invalidInput(
+                "\(testCase.name).prompt_tokens has \(testCase.promptTokens.count) tokens; need exactly \(requiredPromptTokens)"
+            )
         }
         if testCase.expectedTokens.count != requiredSteps {
             throw MLXFastError.invalidInput(

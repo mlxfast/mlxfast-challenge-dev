@@ -14,7 +14,8 @@ public enum MLXFastConstants {
     public static let keyValueHeads = 1
     public static let routedExperts = 256
     public static let expertsPerToken = 6
-    public static let correctnessSteps = 256
+    public static let correctnessPromptTokens = 512
+    public static let correctnessSteps = 2_048
     public static let benchmarkPrefillPromptTokens = 512
     public static let benchmarkDecodeSteps = 512
     public static let benchmarkDecodeSeedTokens = 32
