@@ -224,7 +224,7 @@ func committedTemporaryPromptManifestMatchesContract() throws {
 
 @Test
 func committedTemporaryGoldenFixtureMatchesContract() throws {
-    let fixture = try loadGoldenFixture(from: "fixtures/correctness_golden_512_256.json")
+    let fixture = try loadGoldenFixture(from: "fixtures/correctness_golden_512_256_benchmark512.json")
 
     #expect(fixture.cases.count == 1)
     #expect(fixture.cases[0].promptTokens.count == MLXFastConstants.correctnessPromptTokens)
@@ -232,7 +232,7 @@ func committedTemporaryGoldenFixtureMatchesContract() throws {
     #expect(fixture.benchmark?.prefillPromptTokens.count == MLXFastConstants.benchmarkPrefillPromptTokens)
     #expect(fixture.benchmark?.decodeSeedTokens.count == MLXFastConstants.benchmarkDecodeSeedTokens)
     #expect(fixture.benchmark?.expectedDecodeTokens.count == MLXFastConstants.benchmarkDecodeSteps)
-    #expect(fixture.sha256 == "c5d520ec87cc4a105ff13a39ade581801049a90944d42f456d15a33ef080eb1e")
+    #expect(fixture.sha256 == "028cefb0e6377cc4bb178fa907ee19e048f965ca7798928efeb50f5025650dae")
 }
 
 @Test
