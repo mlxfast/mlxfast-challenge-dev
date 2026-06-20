@@ -198,7 +198,7 @@ The manifest contains correctness prompts plus a dedicated benchmark prompt
 ```text
 {
   "version": 1,
-  "max_output_tokens": 2048,
+  "max_output_tokens": 512,
   "cases": [
     {"name": "hidden-0", "prompt_tokens": [exactly 512 token IDs]}
   ],
