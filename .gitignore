@@ -1,40 +1,32 @@
 # Build artifacts
-__pycache__/
-*.py[cod]
-*$py.class
 *.so
-.Python
 build/
 dist/
-*.egg-info/
-.eggs/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
+.build/
+.tools/
+.mlxfast-cache/
 
-# Virtual environments
-venv/
-.venv/
-env/
+# Reference weights are large and downloaded by setup.sh
+reference_weights/*
+!reference_weights/.gitkeep
 
-# The reference weights are large and downloaded by `mlxfast weights`
-mlxfast/reference_weights/
-!mlxfast/reference_weights/.gitkeep
-
-# The participant's transformed weights — gitignored by default, opt in if you want
+# Participant transformed weights are gitignored by default; opt in if needed
 weights/*
 !weights/.gitkeep
 
 # Local results log
 results.tsv
+m5_artifacts/
 
 # Benchmark contract outputs
 score.json
 score.json.tmp
+correctness_golden.json
 
 # IDE
 .vscode/
 .idea/
+.serena/
 *.swp
 *.swo
 .DS_Store
