@@ -190,6 +190,7 @@ jobs:
           name: benchmark-results-${{ github.run_id }}
           path: |
             correctness-report.json
+            correctness_golden.json
             score.json
             score.json.sha256
             benchmark-integrity.json
