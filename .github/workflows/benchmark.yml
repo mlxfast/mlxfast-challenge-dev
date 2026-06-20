@@ -33,6 +33,11 @@ on:
         required: false
         default: true
         type: boolean
+      preserve_golden_only:
+        description: "Restore the cached correctness golden and upload it as an artifact without setup, transform, correctness, or benchmark."
+        required: false
+        default: false
+        type: boolean
       trace_correctness_step:
         description: "Optional maintainer diagnostic: trace logits at a 0-based correctness decode step. Disabled on submission branches."
         required: false
@@ -45,7 +50,7 @@ on:
         type: string
 
 concurrency:
-  group: benchmark-${{ github.ref }}-${{ inputs.run_benchmark && 'full' || 'correctness-only' }}
+  group: benchmark-${{ github.ref }}-${{ inputs.preserve_golden_only && 'preserve-golden' || (inputs.run_benchmark && 'full' || 'correctness-only') }}
   cancel-in-progress: true
 
 permissions:
@@ -95,14 +100,41 @@ jobs:
           path: .mlxfast-cache/correctness-golden
           key: correctness-golden-${{ runner.os }}-${{ runner.arch }}-blacksmith-macos-26-${{ env.MLXFAST_CORRECTNESS_GOLDEN_CACHE_VERSION }}-${{ hashFiles('private_prompts.json', 'Package.resolved', 'Sources/MLXFastCore/Constants.swift', 'Sources/MLXFastCore/Golden.swift', 'Sources/MLXFastDeepSeekHarness/**') }}
 
+      - name: Preserve cached correctness golden
+        if: inputs.preserve_golden_only
+        run: |
+          set -euo pipefail
+          if [[ ! -s "${MLXFAST_CORRECTNESS_GOLDEN_CACHE_PATH}" ]]; then
+            echo "benchmark: cached correctness golden missing at ${MLXFAST_CORRECTNESS_GOLDEN_CACHE_PATH}" >&2
+            echo "benchmark: cache-hit=${{ steps.restore-correctness-golden.outputs.cache-hit }}" >&2
+            exit 1
+          fi
+          cp "${MLXFAST_CORRECTNESS_GOLDEN_CACHE_PATH}" correctness_golden.json
+          shasum -a 256 correctness_golden.json > correctness_golden.json.sha256
+          wc -c correctness_golden.json > correctness_golden.json.bytes
+
+      - name: Upload preserved correctness golden artifact
+        if: inputs.preserve_golden_only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: correctness-golden-${{ github.run_id }}
+          path: |
+            correctness_golden.json
+            correctness_golden.json.sha256
+            correctness_golden.json.bytes
+          if-no-files-found: error
+
       - name: Setup Swift harness and reference checkpoint
+        if: ${{ !inputs.preserve_golden_only }}
         run: ./setup.sh
 
       - name: Transform reference checkpoint
+        if: ${{ !inputs.preserve_golden_only }}
         run: .build/release/mlxfast-swift transform
 
       - name: Prepare correctness golden
         id: prepare-correctness-golden
+        if: ${{ !inputs.preserve_golden_only }}
         run: |
           set -euo pipefail
           if [[ -n "${MLXFAST_CORRECTNESS_GOLDEN_URL:-}" ]]; then
@@ -158,6 +190,7 @@ jobs:
           key: ${{ steps.restore-correctness-golden.outputs.cache-primary-key }}
 
       - name: Upload correctness golden artifact
+        if: ${{ !inputs.preserve_golden_only }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: correctness-golden-${{ github.run_id }}
@@ -165,6 +198,7 @@ jobs:
           if-no-files-found: error
 
       - name: Correctness
+        if: ${{ !inputs.preserve_golden_only }}
         run: |
           set -euo pipefail
           .build/release/mlxfast-swift correctness \
@@ -173,14 +207,14 @@ jobs:
             > correctness-report.json
 
       - name: Benchmark
-        if: inputs.run_benchmark
+        if: ${{ !inputs.preserve_golden_only && inputs.run_benchmark }}
         env:
           MLXFAST_NOTE: "ci ${{ github.event_name }} ${{ github.sha }}"
           MLXFAST_SKIP_TRANSFORM: "1"
         run: ./benchmark.sh
 
       - name: Trace correctness mismatch
-        if: always() && inputs.trace_correctness_step != '' && !startsWith(github.ref_name, 'submissions/')
+        if: always() && !inputs.preserve_golden_only && inputs.trace_correctness_step != '' && !startsWith(github.ref_name, 'submissions/')
         run: |
           set -euo pipefail
           .build/release/mlxfast-swift correctness-trace \
@@ -191,7 +225,7 @@ jobs:
             > correctness-trace.json
 
       - name: Upload score artifacts
-        if: always()
+        if: always() && !inputs.preserve_golden_only
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-results-${{ github.run_id }}
@@ -205,7 +239,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload correctness trace artifact
-        if: always() && inputs.trace_correctness_step != '' && !startsWith(github.ref_name, 'submissions/')
+        if: always() && !inputs.preserve_golden_only && inputs.trace_correctness_step != '' && !startsWith(github.ref_name, 'submissions/')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: correctness-trace-${{ github.run_id }}
