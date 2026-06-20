@@ -232,7 +232,7 @@ func committedTemporaryGoldenFixtureMatchesContract() throws {
     #expect(fixture.benchmark?.prefillPromptTokens.count == MLXFastConstants.benchmarkPrefillPromptTokens)
     #expect(fixture.benchmark?.decodeSeedTokens.count == MLXFastConstants.benchmarkDecodeSeedTokens)
     #expect(fixture.benchmark?.expectedDecodeTokens.count == MLXFastConstants.benchmarkDecodeSteps)
-    #expect(fixture.sha256 == "17876fac4ec846c53f2e192b83976f2212f2c39eb3e7f288f03e011a41802edf")
+    #expect(fixture.sha256 == "1a53026232c4358f726af0d1cc6f1ffed1184869b16212a46a2dee7eb530925f")
 }
 
 @Test
